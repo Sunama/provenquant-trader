@@ -135,9 +135,20 @@ async def list_strategy_classes():
                     try:
                         instance = attr()
                         schema = [s.__dict__ for s in instance.parameter_schema] if hasattr(instance, "parameter_schema") else []
-                        classes.append({"class_path": class_path, "id": instance.id, "parameter_schema": schema})
+                        default_subs = [
+                            {
+                                "asset_slug": s.asset_slug,
+                                "exchange": s.exchange,
+                                "timeframe": s.timeframe,
+                                "market_type": s.market_type,
+                                "tick_process": s.tick_process,
+                                "description": s.description,
+                            }
+                            for s in instance.subscriptions
+                        ]
+                        classes.append({"class_path": class_path, "id": instance.id, "parameter_schema": schema, "default_subscriptions": default_subs})
                     except Exception:
-                        classes.append({"class_path": class_path, "id": None, "parameter_schema": []})
+                        classes.append({"class_path": class_path, "id": None, "parameter_schema": [], "default_subscriptions": []})
         except Exception:
             pass
     return classes

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { strategies, positions } from "@/lib/api";
 import { useLiveDataStore } from "@/lib/store/useLiveDataStore";
+import { useShallow } from "zustand/react/shallow";
 import { formatPnl, formatPct } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -27,8 +28,10 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
     queryFn: () => positions.list({ strategy_id: id, limit: 50 }),
   });
 
-  const recentSignals = useLiveDataStore((s) =>
-    s.recentSignals.filter((sig) => sig.config_id === id || sig.strategy_id === strategy?.id)
+  const recentSignals = useLiveDataStore(
+    useShallow((s) =>
+      s.recentSignals.filter((sig) => sig.config_id === id || sig.strategy_id === strategy?.id)
+    )
   );
 
   if (!strategy) return <p className="text-muted-foreground">Loading…</p>;

@@ -8,7 +8,10 @@ from datetime import datetime, timezone
 
 import httpx
 import websockets
+from sqlalchemy.dialects.postgresql import insert
 
+from app.db.models.tick import Tick
+from app.db.session import SessionLocal
 from app.services.data_fetcher import (
     AggTradeData,
     DataFetcher,
@@ -80,6 +83,7 @@ class BinanceDataFetcher(DataFetcher):
     def _launch_all_tasks(self) -> None:
         if not self._subscriptions:
             return
+        self._tasks["backfill"] = asyncio.create_task(self._backfill_task())
         self._tasks["kline"] = asyncio.create_task(self._kline_task())
         self._tasks["mark_price"] = asyncio.create_task(self._mark_price_task())
         self._tasks["agg_trade"] = asyncio.create_task(self._agg_trade_task())
@@ -123,6 +127,52 @@ class BinanceDataFetcher(DataFetcher):
         streams = [f"{s}@depth20@100ms" for s in symbols]
         return f"{_WS_BASE}?streams={'/'.join(streams)}"
 
+    # ── Historical backfill ───────────────────────────────────────
+
+    async def _backfill_task(self) -> None:
+        """Seed the last 200 closed bars from Binance REST API into Postgres on startup."""
+        seen: set[str] = set()
+        async with httpx.AsyncClient(timeout=15) as client:
+            for sub in list(self._subscriptions.values()):
+                key = f"{sub.asset_slug}:{sub.timeframe}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                interval = _TF_MAP.get(sub.timeframe, "1m")
+                symbol = sub.asset_slug.upper()
+                try:
+                    resp = await client.get(
+                        f"{_REST_BASE}/fapi/v1/klines",
+                        params={"symbol": symbol, "interval": interval, "limit": 200},
+                    )
+                    if resp.status_code != 200:
+                        logger.warning(f"[backfill] {symbol} {interval} HTTP {resp.status_code}")
+                        continue
+                    rows = [
+                        {
+                            "asset_slug": sub.asset_slug.lower(),
+                            "timeframe": sub.timeframe,
+                            "time": datetime.fromtimestamp(int(k[0]) / 1000, tz=timezone.utc),
+                            "open": float(k[1]),
+                            "high": float(k[2]),
+                            "low": float(k[3]),
+                            "close": float(k[4]),
+                            "volume": float(k[5]),
+                        }
+                        for k in resp.json()
+                    ]
+                    if rows:
+                        async with SessionLocal() as db:
+                            await db.execute(
+                                insert(Tick).values(rows).on_conflict_do_nothing(constraint="uq_tick")
+                            )
+                            await db.commit()
+                        logger.info(f"[backfill] {symbol} {interval}: seeded {len(rows)} bars")
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    logger.exception(f"[backfill] {symbol} {interval} failed")
+
     # ── Kline task ────────────────────────────────────────────────
 
     async def _kline_task(self) -> None:
@@ -162,6 +212,7 @@ class BinanceDataFetcher(DataFetcher):
                 close=float(kline["c"]),
                 volume=float(kline["v"]),
             )
+            logger.info(f"[bar] {tick.asset_slug} {tick.timeframe} close={tick.close:.4f} vol={tick.volume:.2f}")
             await self._emit(tick)
         except Exception:
             logger.exception("[BinanceFetcher] kline parse error")

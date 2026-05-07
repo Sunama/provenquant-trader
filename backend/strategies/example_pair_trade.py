@@ -51,8 +51,10 @@ class PairTradeStrategy(StrategyExecuter):
     @property
     def subscriptions(self) -> list[Subscription]:
         return [
-            Subscription(asset_slug="btcusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=True),
-            Subscription(asset_slug="ethusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=False),
+            Subscription(asset_slug="btcusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=True,
+                         description="Primary asset — this tick triggers execution; long when ratio is low"),
+            Subscription(asset_slug="ethusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=False,
+                         description="Counter asset — moves inversely to primary; short when primary is long"),
         ]
 
     async def execute(self, tick: TickData, asset_num: int) -> list[TradeSignal]:

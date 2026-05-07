@@ -24,6 +24,7 @@ services:
       - ./backend/app:/backend/app
       - ./backend/alembic:/backend/alembic
       - ./backend/tasks.py:/backend/tasks.py
+      - ./backend/strategies:/backend/strategies
     env_file: .env
     depends_on:
       migrate:

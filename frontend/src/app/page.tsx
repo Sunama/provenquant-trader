@@ -38,6 +38,13 @@ export default function DashboardPage() {
 
   const activeStrategies = allStrategies?.filter((s) => s.enabled).length ?? 0;
 
+  // Show chart for first tick-processed asset of first active strategy
+  const chartAsset = allStrategies
+    ?.find((s) => s.enabled)
+    ?.assets.find((a) => a.tick_process)
+    ?? allStrategies?.find((s) => s.enabled)?.assets[0]
+    ?? null;
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -67,10 +74,15 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="rounded-lg border bg-card p-5">
-        <p className="mb-3 text-sm font-semibold">BTC/USDT — 1m</p>
-        <LivePriceChart assetSlug="btcusdt" timeframe="1m" />
-      </div>
+      {chartAsset && (
+        <div className="rounded-lg border bg-card p-5">
+          <p className="mb-3 text-sm font-semibold">
+            {chartAsset.asset_slug.toUpperCase()} — {chartAsset.timeframe}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">({chartAsset.exchange})</span>
+          </p>
+          <LivePriceChart assetSlug={chartAsset.asset_slug} timeframe={chartAsset.timeframe} />
+        </div>
+      )}
 
       <RecentSignalsTable />
 

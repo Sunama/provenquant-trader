@@ -14,6 +14,7 @@ interface Props {
 
 const MARKET_TYPES = ["futures", "spot", "options"];
 const TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"];
+const EXCHANGES = ["binance", "bybit", "okx"];
 
 function ParameterInput({ schema, value, onChange }: { schema: ParameterSchema; value: unknown; onChange: (v: unknown) => void }) {
   const current = value ?? schema.default;
@@ -120,7 +121,25 @@ export function StrategyEditor({ initial }: Props) {
             <label className="block text-xs text-muted-foreground mb-1">Strategy Class *</label>
             <select
               value={classPath}
-              onChange={(e) => setClassPath(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setClassPath(val);
+                if (!isEdit && val) {
+                  const cls = classes?.find((c) => c.class_path === val);
+                  if (cls?.default_subscriptions?.length) {
+                    setAssets(
+                      cls.default_subscriptions.map((s) => ({
+                        asset_slug: s.asset_slug,
+                        exchange: s.exchange,
+                        timeframe: s.timeframe,
+                        market_type: s.market_type as StrategyAsset["market_type"],
+                        tick_process: s.tick_process,
+                        description: s.description,
+                      }))
+                    );
+                  }
+                }
+              }}
               className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="">Select a class…</option>
@@ -199,12 +218,13 @@ export function StrategyEditor({ initial }: Props) {
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Exchange</label>
-                <input
+                <select
                   value={asset.exchange}
                   onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, exchange: e.target.value } : a))}
-                  placeholder="binance"
                   className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+                >
+                  {EXCHANGES.map((ex) => <option key={ex} value={ex}>{ex}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Timeframe</label>

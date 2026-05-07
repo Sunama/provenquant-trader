@@ -81,6 +81,22 @@ export interface ExchangeAccount {
   updated_at?: string;
 }
 
+export interface DefaultSubscription {
+  asset_slug: string;
+  exchange: string;
+  timeframe: string;
+  market_type: "spot" | "futures" | "options";
+  tick_process: boolean;
+  description: string;
+}
+
+export interface StrategyClassInfo {
+  class_path: string;
+  id: string | null;
+  parameter_schema: ParameterSchema[];
+  default_subscriptions: DefaultSubscription[];
+}
+
 export interface WatchedAsset {
   id: number;
   asset_slug: string;

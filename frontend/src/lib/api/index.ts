@@ -6,6 +6,7 @@ import type {
   ExchangeAccount,
   WatchedAsset,
   Kline,
+  StrategyClassInfo,
 } from "@/lib/types";
 
 // ── Strategies ─────────────────────────────────────────────
@@ -17,7 +18,7 @@ export const strategies = {
   update: (id: string, body: unknown) => api.put<{ id: string }>(`/strategies/${id}`, body),
   delete: (id: string) => api.delete<void>(`/strategies/${id}`),
   toggle: (id: string) => api.patch<{ id: string; enabled: boolean }>(`/strategies/${id}/toggle`),
-  classes: () => api.get<{ class_path: string; id: string; parameter_schema: unknown[] }[]>("/strategies/classes"),
+  classes: () => api.get<StrategyClassInfo[]>("/strategies/classes"),
   schema: (classPath: string) =>
     api.get<{ id: string; parameter_schema: unknown[]; subscriptions_template: unknown[] }>(
       `/strategies/schema?class_path=${encodeURIComponent(classPath)}`

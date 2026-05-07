@@ -21,6 +21,7 @@ class Subscription:
     exchange: str = "binance"
     market_type: str = "futures"
     tick_process: bool = False      # True = receiving this tick triggers strategy execution
+    description: str = ""           # human-readable role of this asset in the strategy
 
 
 @dataclass
