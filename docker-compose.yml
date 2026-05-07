@@ -1,4 +1,18 @@
 services:
+  migrate:
+    build:
+      context: .
+      dockerfile: ./docker/backend/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    volumes:
+      - ./backend/app:/backend/app
+      - ./backend/alembic:/backend/alembic
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   backend:
     build:
       context: .
@@ -12,8 +26,8 @@ services:
       - ./backend/tasks.py:/backend/tasks.py
     env_file: .env
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       rabbitmq:
@@ -28,8 +42,8 @@ services:
       - ./backend/app:/backend/app
     env_file: .env
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       rabbitmq:
@@ -44,8 +58,8 @@ services:
       - ./backend/app:/backend/app
     env_file: .env
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       rabbitmq:
@@ -63,8 +77,8 @@ services:
     env_file: .env
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       rabbitmq:
@@ -106,6 +120,35 @@ services:
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--loglevel", "notice"]
     volumes:
       - ./data/redis:/data
+
+  trade-executer:
+    build:
+      context: .
+      dockerfile: ./docker/backend/Dockerfile
+    command: ["python", "trade_executer.py"]
+    volumes:
+      - ./backend/app:/backend/app
+      - ./backend/trade_executer.py:/backend/trade_executer.py
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: .
+      dockerfile: ./docker/frontend/Dockerfile
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8001/ws
 
   rabbitmq:
     image: rabbitmq:3-management

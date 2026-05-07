@@ -14,6 +14,7 @@ create_db() {
         GRANT ALL PRIVILEGES ON DATABASE $database TO $username;
         \c $database
         GRANT ALL ON SCHEMA public TO $username;
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
 EOSQL
 }
 

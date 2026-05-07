@@ -3,6 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.db import base  # noqa: F401 — ensures models are registered with SQLAlchemy
 from app.api import api_router
+from app.api.ws import router as ws_router
 from app.core.settings import settings
 
 app = FastAPI(
@@ -20,6 +21,7 @@ if settings.BACKEND_CORS_ORIGINS:
     )
 
 app.include_router(api_router, prefix=settings.API_STR)
+app.include_router(ws_router)  # WebSocket at /ws (no prefix)
 
 
 @app.get("/")

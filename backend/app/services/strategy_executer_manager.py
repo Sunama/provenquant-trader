@@ -3,17 +3,20 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import time
 from dataclasses import dataclass
 from typing import Type
 
 import redis.asyncio as aioredis
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.settings import settings
+import app.db.base  # noqa: F401 — registers all ORM models so relationships resolve
 from app.db.models.strategy_config import StrategyConfig
 from app.db.session import SessionLocal
 from app.services.data_fetcher import DataFetcher, Subscription, TickCallback, TickData
-from app.services.strategy_executer import StrategyExecuter
+from app.services.strategy_executer import StrategyExecuter, StrategyAssetConfig
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +25,14 @@ _LOCK_TIMEOUT = 60  # seconds — max allowed execution time per strategy tick
 
 @dataclass
 class _StrategyEntry:
+    config_id: str
     cls: Type[StrategyExecuter]
     class_path: str
     params: dict | None
+    assets: list[StrategyAssetConfig]
 
     def probe(self) -> StrategyExecuter:
-        """Instantiate to inspect id/subscriptions without executing."""
-        return self.cls(params=self.params)
+        return self.cls(params=self.params, assets=self.assets)
 
 
 class StrategyExecuterManager:
@@ -36,18 +40,19 @@ class StrategyExecuterManager:
     Manages the set of active StrategyExecuters.
 
     Responsibilities:
-      1. Load enabled StrategyConfigs from Postgres on startup (and on config change)
-      2. Maintain one DataFetcher per exchange, subscribing each to the union of
-         subscriptions declared by active strategies on that exchange
+      1. Load enabled StrategyConfigs + their assets from Postgres on startup
+      2. Maintain one DataFetcher per exchange, subscribing to the union of all
+         strategy asset subscriptions plus WatchedAsset subscriptions
       3. On each closed bar, dispatch a Celery task for every strategy whose
-         trigger subscription matches the tick, guarded by a Redis lock
-      4. Listen on Redis Pub/Sub ("strategy:config_changed") for runtime reloads
+         tick_process subscription matches — guarded by a Redis lock
+      4. Publish trade signals to Redis Stream "signals:trade" (read by TradeExecuterProcess)
+      5. Listen on Redis Pub/Sub "strategy:config_changed" for runtime reloads
     """
 
     def __init__(self, fetcher_registry: dict[str, Type[DataFetcher]]) -> None:
         self._fetcher_registry = fetcher_registry
         self._fetchers: dict[str, DataFetcher] = {}
-        self._registry: dict[str, _StrategyEntry] = {}
+        self._registry: dict[str, _StrategyEntry] = {}   # strategy_id → entry
         self._redis: aioredis.Redis | None = None
         self._watcher_task: asyncio.Task | None = None
 
@@ -81,7 +86,9 @@ class StrategyExecuterManager:
     async def _load_from_db(self) -> None:
         async with SessionLocal() as session:
             result = await session.execute(
-                select(StrategyConfig).where(StrategyConfig.enabled == True)  # noqa: E712
+                select(StrategyConfig)
+                .where(StrategyConfig.enabled == True)  # noqa: E712
+                .options(selectinload(StrategyConfig.assets))
             )
             configs = result.scalars().all()
 
@@ -91,10 +98,29 @@ class StrategyExecuterManager:
                 module_path, class_name = config.strategy_class.rsplit(".", 1)
                 module = importlib.import_module(module_path)
                 cls: Type[StrategyExecuter] = getattr(module, class_name)
-                entry = _StrategyEntry(cls=cls, class_path=config.strategy_class, params=config.params)
+
+                asset_configs = [
+                    StrategyAssetConfig(
+                        asset_num=a.asset_num,
+                        asset_slug=a.asset_slug,
+                        exchange=a.exchange,
+                        timeframe=a.timeframe,
+                        market_type=a.market_type,
+                        tick_process=a.tick_process,
+                    )
+                    for a in sorted(config.assets, key=lambda x: x.asset_num)
+                ]
+
+                entry = _StrategyEntry(
+                    config_id=config.id,
+                    cls=cls,
+                    class_path=config.strategy_class,
+                    params=config.params,
+                    assets=asset_configs,
+                )
                 strategy_id = entry.probe().id
                 new_registry[strategy_id] = entry
-                logger.info(f"Loaded strategy: {strategy_id} ({config.strategy_class})")
+                logger.info(f"Loaded strategy: {strategy_id} ({config.strategy_class}) with {len(asset_configs)} asset(s)")
             except Exception:
                 logger.exception(f"Failed to load strategy class '{config.strategy_class}', skipping")
 
@@ -103,13 +129,22 @@ class StrategyExecuterManager:
     # ── Fetcher management ────────────────────────────────────────
 
     async def _sync_fetchers(self) -> None:
-        """Create/update/stop DataFetchers to match current strategy subscriptions."""
+        """Create/update/stop DataFetchers to match current strategy + watched subscriptions."""
         subs_by_exchange: dict[str, list[Subscription]] = {}
+
+        # Collect from active strategies
         for entry in self._registry.values():
             for sub in entry.probe().subscriptions:
                 subs_by_exchange.setdefault(sub.exchange, []).append(sub)
 
-        # Start or update fetchers for exchanges now needed
+        # Merge WatchedAsset subscriptions
+        try:
+            from app.services.watched_asset_manager import WatchedAssetManager
+            for sub in await WatchedAssetManager().get_subscriptions():
+                subs_by_exchange.setdefault(sub.exchange, []).append(sub)
+        except Exception:
+            logger.debug("WatchedAssetManager not available or empty")
+
         for exchange, subs in subs_by_exchange.items():
             if exchange not in self._fetchers:
                 if exchange not in self._fetcher_registry:
@@ -124,7 +159,6 @@ class StrategyExecuterManager:
             else:
                 self._fetchers[exchange].set_subscriptions(self._dedupe(subs))
 
-        # Stop fetchers for exchanges no longer needed
         stale = set(self._fetchers) - set(subs_by_exchange)
         for exchange in stale:
             await self._fetchers.pop(exchange).stop()
@@ -134,7 +168,8 @@ class StrategyExecuterManager:
     def _dedupe(subs: list[Subscription]) -> list[Subscription]:
         seen: dict[str, Subscription] = {}
         for s in subs:
-            seen[f"{s.asset_slug}:{s.timeframe}"] = s
+            key = f"{s.asset_slug}:{s.timeframe}:{s.market_type}"
+            seen[key] = s
         return list(seen.values())
 
     def _make_tick_callback(self, exchange: str) -> TickCallback:
@@ -149,15 +184,19 @@ class StrategyExecuterManager:
         from app.tasks.strategy import run_strategy  # avoid circular import
 
         for strategy_id, entry in self._registry.items():
-            probe = entry.probe()
-            triggered = any(
-                s.is_trigger
-                and s.exchange == exchange
-                and s.asset_slug == tick.asset_slug
-                and s.timeframe == tick.timeframe
-                for s in probe.subscriptions
-            )
-            if not triggered:
+            # Find the asset_num of the triggering subscription
+            triggered_asset_num: int | None = None
+            for asset in entry.assets:
+                if (
+                    asset.tick_process
+                    and asset.exchange == exchange
+                    and asset.asset_slug == tick.asset_slug
+                    and asset.timeframe == tick.timeframe
+                ):
+                    triggered_asset_num = asset.asset_num
+                    break
+
+            if triggered_asset_num is None:
                 continue
 
             lock_key = f"strategy_lock:{strategy_id}"
@@ -165,8 +204,28 @@ class StrategyExecuterManager:
                 logger.debug(f"Strategy {strategy_id} still running, skipping tick")
                 continue
 
+            assets_dicts = [
+                {
+                    "asset_num": a.asset_num,
+                    "asset_slug": a.asset_slug,
+                    "exchange": a.exchange,
+                    "timeframe": a.timeframe,
+                    "market_type": a.market_type,
+                    "tick_process": a.tick_process,
+                }
+                for a in entry.assets
+            ]
+
             run_strategy.apply_async(
-                args=[strategy_id, entry.class_path, tick.to_dict(), entry.params]
+                args=[
+                    strategy_id,
+                    entry.class_path,
+                    tick.to_dict(),
+                    entry.params,
+                    assets_dicts,
+                    triggered_asset_num,
+                    entry.config_id,
+                ]
             )
 
     async def _try_acquire_lock(self, key: str) -> bool:
@@ -178,7 +237,6 @@ class StrategyExecuterManager:
     # ── Config change watcher ─────────────────────────────────────
 
     async def _watch_config_changes(self) -> None:
-        """Subscribe to Redis Pub/Sub and reload strategies when notified."""
         pubsub = self._redis.pubsub()
         await pubsub.subscribe("strategy:config_changed")
         try:
@@ -197,11 +255,22 @@ class StrategyExecuterManager:
         await self._sync_fetchers()
         logger.info("StrategyExecuterManager reloaded")
 
-    # ── Manual registration (for testing / CLI override) ──────────
+    # ── Manual registration (for testing / CLI) ───────────────────
 
-    def register(self, strategy_class: Type[StrategyExecuter], params: dict | None = None) -> None:
+    def register(
+        self,
+        strategy_class: Type[StrategyExecuter],
+        params: dict | None = None,
+        assets: list[StrategyAssetConfig] | None = None,
+    ) -> None:
         class_path = f"{strategy_class.__module__}.{strategy_class.__name__}"
-        entry = _StrategyEntry(cls=strategy_class, class_path=class_path, params=params)
+        entry = _StrategyEntry(
+            config_id="manual",
+            cls=strategy_class,
+            class_path=class_path,
+            params=params,
+            assets=assets or [],
+        )
         strategy_id = entry.probe().id
         self._registry[strategy_id] = entry
         asyncio.create_task(self._sync_fetchers())
