@@ -120,9 +120,8 @@ class StrategyExecuterManager:
                     assets=asset_configs,
                     is_paper=config.is_paper,
                 )
-                strategy_id = entry.probe().id
-                new_registry[strategy_id] = entry
-                logger.info(f"Loaded strategy: {strategy_id} ({config.strategy_class}) with {len(asset_configs)} asset(s)")
+                new_registry[config.id] = entry
+                logger.info(f"Loaded strategy: {config.id} ({config.strategy_class}) with {len(asset_configs)} asset(s)")
             except Exception:
                 logger.exception(f"Failed to load strategy class '{config.strategy_class}', skipping")
 

@@ -25,6 +25,7 @@ services:
       - ./backend/alembic:/backend/alembic
       - ./backend/tasks.py:/backend/tasks.py
       - ./backend/strategies:/backend/strategies
+      - ./backend/tests:/backend/tests
     env_file: .env
     depends_on:
       migrate:
@@ -142,6 +143,7 @@ services:
     build:
       context: .
       dockerfile: ./docker/frontend/Dockerfile
+      target: dev
     ports:
       - "3001:3000"
     volumes:

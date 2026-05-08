@@ -39,12 +39,25 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
   useEffect(() => {
     if (!mainRef.current || !klines) return;
 
+    // Offset UTC timestamps → local-time so the chart labels match the browser's timezone
+    const tzOffset = -new Date().getTimezoneOffset() * 60; // seconds (positive for UTC+N)
+    const toLocal = (ms: number): Time => (Math.floor(ms / 1000) + tzOffset) as Time;
+
     // ── Main candlestick chart ────────────────────────────────
     const chart = createChart(mainRef.current, {
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#888" },
-      grid: { vertLines: { color: "#f0f0f0" }, horzLines: { color: "#f0f0f0" } },
+      grid: { vertLines: { color: "#e5e7eb" }, horzLines: { color: "#e5e7eb" } },
       width: mainRef.current.clientWidth,
       height: 300,
+      rightPriceScale: {
+        borderColor: "#e5e7eb",
+        autoScale: true,
+      },
+      timeScale: {
+        borderColor: "#e5e7eb",
+        timeVisible: true,
+        secondsVisible: false,
+      },
     });
 
     const candles = chart.addCandlestickSeries({
@@ -57,7 +70,7 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
 
     candles.setData(
       klines.map((k) => ({
-        time: (k.time / 1000) as Time,
+        time: toLocal(k.time),
         open: k.open,
         high: k.high,
         low: k.low,
@@ -68,7 +81,7 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
     // On-chart indicator overlays (e.g. EMA)
     for (const ind of onChartIndicators) {
       const line = chart.addLineSeries({ color: ind.color, lineWidth: 1 });
-      line.setData(ind.data.map((p) => ({ time: (p.time / 1000) as Time, value: p.value })));
+      line.setData(ind.data.map((p) => ({ time: toLocal(p.time), value: p.value })));
     }
 
     // Position entry/exit markers
@@ -77,7 +90,7 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
       .flatMap((p) => {
         const ms: SeriesMarker<Time>[] = [
           {
-            time: Math.floor(new Date(p.entry_time!).getTime() / 1000) as Time,
+            time: toLocal(new Date(p.entry_time!).getTime()),
             position: p.side === "long" ? "belowBar" : "aboveBar",
             color: p.side === "long" ? "#22c55e" : "#ef4444",
             shape: p.side === "long" ? "arrowUp" : "arrowDown",
@@ -86,7 +99,7 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
         ];
         if (p.exit_time && p.exit_price) {
           ms.push({
-            time: Math.floor(new Date(p.exit_time).getTime() / 1000) as Time,
+            time: toLocal(new Date(p.exit_time).getTime()),
             position: p.side === "long" ? "aboveBar" : "belowBar",
             color: "#9ca3af",
             shape: p.side === "long" ? "arrowDown" : "arrowUp",
@@ -105,7 +118,7 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
     const unsub = wsClient.subscribe<TickPayload>("tick", (payload) => {
       if (payload.asset_slug !== asset.asset_slug || payload.timeframe !== asset.timeframe) return;
       candles.update({
-        time: (payload.time / 1000) as Time,
+        time: toLocal(payload.time),
         open: payload.open,
         high: payload.high,
         low: payload.low,
@@ -127,7 +140,7 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
         timeScale: { visible: false },
       });
       const line = oscChart.addLineSeries({ color: ind.color, lineWidth: 1 });
-      line.setData(ind.data.map((p) => ({ time: (p.time / 1000) as Time, value: p.value })));
+      line.setData(ind.data.map((p) => ({ time: toLocal(p.time), value: p.value })));
       oscChart.timeScale().fitContent();
       oscCharts.push(oscChart);
     });

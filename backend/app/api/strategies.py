@@ -104,6 +104,12 @@ def _serialize(config: StrategyConfig) -> dict:
     }
 
 
+async def _notify_trader() -> None:
+    r = await aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    await r.publish("strategy:config_changed", "")
+    await r.aclose()
+
+
 # ── Endpoints ─────────────────────────────────────────────────
 
 @router.get("/")
@@ -248,6 +254,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
         ))
 
     await db.commit()
+    await _notify_trader()
     return {"id": config.id}
 
 
@@ -295,6 +302,7 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
             ))
 
     await db.commit()
+    await _notify_trader()
     return {"id": config.id}
 
 
@@ -305,6 +313,7 @@ async def delete_strategy(strategy_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Not found")
     await db.delete(config)
     await db.commit()
+    await _notify_trader()
 
 
 @router.patch("/{strategy_id}/toggle")
@@ -314,9 +323,5 @@ async def toggle_strategy(strategy_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Not found")
     config.enabled = not config.enabled
     await db.commit()
-
-    r = await aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-    await r.publish("strategy:config_changed", "")
-    await r.aclose()
-
+    await _notify_trader()
     return {"id": config.id, "enabled": config.enabled}

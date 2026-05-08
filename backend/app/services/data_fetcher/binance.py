@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 
 import httpx
-import websockets
+from websockets.asyncio.client import connect as ws_connect
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.models.tick import Tick
@@ -46,8 +46,10 @@ class BinanceBaseDataFetcher(DataFetcher):
     """
     Shared base for Binance market-type fetchers.
 
-    Implements: kline, aggTrade, orderbook, OI REST poll, historical backfill.
-    Subclasses extend _launch_all_tasks() and supply _ws_base/_rest_base properties.
+    Opens ONE combined WebSocket per fetcher instance that carries all stream
+    types (kline, aggTrade, depth) for all subscribed symbols.  Subclasses
+    inject additional streams via _extra_streams() and route extra message
+    types by overriding _dispatch_stream_msg().
     """
 
     def __init__(self, testnet: bool = False) -> None:
@@ -65,6 +67,10 @@ class BinanceBaseDataFetcher(DataFetcher):
     @property
     def _rest_base(self) -> str:
         raise NotImplementedError
+
+    @property
+    def _klines_path(self) -> str:
+        return "/fapi/v1/klines"
 
     # ── DataFetcher interface ─────────────────────────────────────
 
@@ -92,31 +98,65 @@ class BinanceBaseDataFetcher(DataFetcher):
     def _launch_all_tasks(self) -> None:
         if not self._subscriptions:
             return
-        self._tasks["backfill"]  = asyncio.create_task(self._backfill_task())
-        self._tasks["kline"]     = asyncio.create_task(self._kline_task())
-        self._tasks["agg_trade"] = asyncio.create_task(self._agg_trade_task())
-        self._tasks["orderbook"] = asyncio.create_task(self._orderbook_task())
-        self._tasks["oi_loop"]   = asyncio.create_task(self._open_interest_loop())
+        self._tasks["backfill"] = asyncio.create_task(self._backfill_task())
+        self._tasks["stream"]   = asyncio.create_task(self._stream_task())
 
-    # ── URL helpers ───────────────────────────────────────────────
+    # ── URL / stream helpers ──────────────────────────────────────
 
     def _symbols(self) -> list[str]:
         return list({s.asset_slug.lower() for s in self._subscriptions.values()})
 
-    def _kline_url(self) -> str | None:
-        streams = [
-            f"{sub.asset_slug.lower()}@kline_{_TF_MAP.get(sub.timeframe, '1m')}"
-            for sub in self._subscriptions.values()
-        ]
-        return f"{self._ws_base}?streams={'/'.join(streams)}" if streams else None
+    def _extra_streams(self) -> list[str]:
+        return []
 
-    def _agg_trade_url(self) -> str | None:
-        symbols = self._symbols()
-        return f"{self._ws_base}?streams={'/'.join(f'{s}@aggTrade' for s in symbols)}" if symbols else None
+    def _all_streams_url(self) -> str | None:
+        if not self._subscriptions:
+            return None
+        streams: list[str] = []
+        for sub in self._subscriptions.values():
+            streams.append(f"{sub.asset_slug.lower()}@kline_{_TF_MAP.get(sub.timeframe, '1m')}")
+        for sym in self._symbols():
+            streams.append(f"{sym}@aggTrade")
+            streams.append(f"{sym}@depth20@100ms")
+        streams.extend(self._extra_streams())
+        return f"{self._ws_base}?streams={'/'.join(streams)}"
 
-    def _orderbook_url(self) -> str | None:
-        symbols = self._symbols()
-        return f"{self._ws_base}?streams={'/'.join(f'{s}@depth20@100ms' for s in symbols)}" if symbols else None
+    # ── Combined stream task ──────────────────────────────────────
+
+    async def _stream_task(self) -> None:
+        while self._running:
+            url = self._all_streams_url()
+            if not url:
+                await asyncio.sleep(1)
+                continue
+            try:
+                async with ws_connect(url, ping_interval=20, ping_timeout=10) as ws:
+                    logger.info(
+                        f"[{self.__class__.__name__}] connected: "
+                        f"{len(self._subscriptions)} subscriptions, "
+                        f"symbols={self._symbols()}"
+                    )
+                    async for raw in ws:
+                        if not self._running:
+                            break
+                        await self._dispatch_stream_msg(raw)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception(f"[{self.__class__.__name__}] stream error, reconnecting")
+                await asyncio.sleep(_RECONNECT_DELAY)
+
+    async def _dispatch_stream_msg(self, raw: str) -> None:
+        try:
+            stream = json.loads(raw).get("stream", "")
+        except Exception:
+            return
+        if "@kline_" in stream:
+            await self._handle_kline(raw)
+        elif "@aggTrade" in stream:
+            await self._handle_agg_trade(raw)
+        elif "@depth" in stream:
+            await self._handle_orderbook(raw)
 
     # ── Historical backfill ───────────────────────────────────────
 
@@ -132,7 +172,7 @@ class BinanceBaseDataFetcher(DataFetcher):
                 symbol = sub.asset_slug.upper()
                 try:
                     resp = await client.get(
-                        f"{self._rest_base}/fapi/v1/klines",
+                        f"{self._rest_base}{self._klines_path}",
                         params={"symbol": symbol, "interval": interval, "limit": 200},
                     )
                     if resp.status_code != 200:
@@ -163,26 +203,7 @@ class BinanceBaseDataFetcher(DataFetcher):
                 except Exception:
                     logger.exception(f"[backfill] {symbol} {interval} failed")
 
-    # ── Kline task ────────────────────────────────────────────────
-
-    async def _kline_task(self) -> None:
-        while self._running:
-            url = self._kline_url()
-            if not url:
-                await asyncio.sleep(1)
-                continue
-            try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
-                    logger.info(f"[{self.__class__.__name__}] kline connected: {len(self._subscriptions)} streams")
-                    async for raw in ws:
-                        if not self._running:
-                            break
-                        await self._handle_kline(raw)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception(f"[{self.__class__.__name__}] kline error, reconnecting")
-                await asyncio.sleep(_RECONNECT_DELAY)
+    # ── Stream handlers ───────────────────────────────────────────
 
     async def _handle_kline(self, raw: str) -> None:
         try:
@@ -212,27 +233,6 @@ class BinanceBaseDataFetcher(DataFetcher):
         except Exception:
             logger.exception(f"[{self.__class__.__name__}] kline parse error")
 
-    # ── Aggregated trades task ────────────────────────────────────
-
-    async def _agg_trade_task(self) -> None:
-        while self._running:
-            url = self._agg_trade_url()
-            if not url:
-                await asyncio.sleep(1)
-                continue
-            try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
-                    logger.info(f"[{self.__class__.__name__}] aggTrade connected")
-                    async for raw in ws:
-                        if not self._running:
-                            break
-                        await self._handle_agg_trade(raw)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception(f"[{self.__class__.__name__}] aggTrade error, reconnecting")
-                await asyncio.sleep(_RECONNECT_DELAY)
-
     async def _handle_agg_trade(self, raw: str) -> None:
         try:
             msg = json.loads(raw)
@@ -250,27 +250,6 @@ class BinanceBaseDataFetcher(DataFetcher):
             await self._emit_agg_trade(agg)
         except Exception:
             logger.exception(f"[{self.__class__.__name__}] aggTrade parse error")
-
-    # ── Order book task ───────────────────────────────────────────
-
-    async def _orderbook_task(self) -> None:
-        while self._running:
-            url = self._orderbook_url()
-            if not url:
-                await asyncio.sleep(1)
-                continue
-            try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
-                    logger.info(f"[{self.__class__.__name__}] depth20 connected")
-                    async for raw in ws:
-                        if not self._running:
-                            break
-                        await self._handle_orderbook(raw)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception(f"[{self.__class__.__name__}] depth20 error, reconnecting")
-                await asyncio.sleep(_RECONNECT_DELAY)
 
     async def _handle_orderbook(self, raw: str) -> None:
         try:
@@ -326,7 +305,8 @@ class BinanceFuturesDataFetcher(BinanceBaseDataFetcher):
     """
     USDT-M Futures WebSocket streams.
 
-    Adds Futures-specific streams: markPrice (includes fundingRate), forceOrder (liquidations).
+    Adds markPrice (includes fundingRate) via the combined stream and
+    forceOrder (liquidations) via a separate global stream.
     Testnet: stream.binancefuture.com / testnet.binancefuture.com
     Mainnet: fstream.binance.com     / fapi.binance.com
     """
@@ -343,33 +323,25 @@ class BinanceFuturesDataFetcher(BinanceBaseDataFetcher):
     def _rest_base(self) -> str:
         return _FUTURES_REST_TEST if self._testnet else _FUTURES_REST_MAIN
 
+    def _extra_streams(self) -> list[str]:
+        return [f"{s}@markPrice@1s" for s in self._symbols()]
+
+    async def _dispatch_stream_msg(self, raw: str) -> None:
+        try:
+            stream = json.loads(raw).get("stream", "")
+        except Exception:
+            return
+        if "@markPrice" in stream:
+            await self._handle_mark_price(raw)
+        else:
+            await super()._dispatch_stream_msg(raw)
+
     def _launch_all_tasks(self) -> None:
+        if not self._subscriptions:
+            return
         super()._launch_all_tasks()
-        self._tasks["mark_price"] = asyncio.create_task(self._mark_price_task())
+        self._tasks["oi_loop"]     = asyncio.create_task(self._open_interest_loop())
         self._tasks["liquidation"] = asyncio.create_task(self._liquidation_task())
-
-    def _mark_price_url(self) -> str | None:
-        symbols = self._symbols()
-        return f"{self._ws_base}?streams={'/'.join(f'{s}@markPrice@1s' for s in symbols)}" if symbols else None
-
-    async def _mark_price_task(self) -> None:
-        while self._running:
-            url = self._mark_price_url()
-            if not url:
-                await asyncio.sleep(1)
-                continue
-            try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
-                    logger.info(f"[{self.__class__.__name__}] mark_price connected")
-                    async for raw in ws:
-                        if not self._running:
-                            break
-                        await self._handle_mark_price(raw)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception(f"[{self.__class__.__name__}] mark_price error, reconnecting")
-                await asyncio.sleep(_RECONNECT_DELAY)
 
     async def _handle_mark_price(self, raw: str) -> None:
         try:
@@ -406,7 +378,7 @@ class BinanceFuturesDataFetcher(BinanceBaseDataFetcher):
         while self._running:
             subscribed_symbols = set(self._symbols())
             try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                async with ws_connect(url, ping_interval=20, ping_timeout=10) as ws:
                     logger.info(f"[{self.__class__.__name__}] forceOrder stream connected")
                     async for raw in ws:
                         if not self._running:

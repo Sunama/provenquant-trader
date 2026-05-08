@@ -16,11 +16,11 @@ from app.services.data_fetcher import (
     Subscription,
     TickData,
 )
-from app.services.data_fetcher.binance import BinanceDataFetcher
+from app.services.data_fetcher.binance import BinanceFuturesDataFetcher
 
 
-def _fetcher(mock_redis) -> BinanceDataFetcher:
-    f = BinanceDataFetcher()
+def _fetcher(mock_redis) -> BinanceFuturesDataFetcher:
+    f = BinanceFuturesDataFetcher()
     f._redis = mock_redis
     f._subscriptions = {
         "btcusdt:1m:futures": Subscription("btcusdt", "1m", "binance", "futures"),

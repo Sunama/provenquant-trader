@@ -5,7 +5,7 @@ import json
 import logging
 import time
 
-import websockets
+from websockets.asyncio.client import connect as ws_connect
 
 from app.services.data_fetcher import (
     DataFetcher,
@@ -81,7 +81,7 @@ class BinanceOptionsDataFetcher(DataFetcher):
             streams = [f"{s}@markPrice" for s in symbols]
             url = f"{_WS_BASE}?streams={'/'.join(streams)}"
             try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                async with ws_connect(url, ping_interval=20, ping_timeout=10) as ws:
                     logger.info(f"[BinanceOptionsDataFetcher] markPrice connected ({len(symbols)} symbols)")
                     async for raw in ws:
                         if not self._running:
@@ -143,7 +143,7 @@ class BinanceOptionsDataFetcher(DataFetcher):
             streams = [f"{u}@index" for u in underlyings]
             url = f"{_WS_BASE}?streams={'/'.join(streams)}"
             try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                async with ws_connect(url, ping_interval=20, ping_timeout=10) as ws:
                     logger.info(f"[BinanceOptionsDataFetcher] index connected ({underlyings})")
                     async for raw in ws:
                         if not self._running:
