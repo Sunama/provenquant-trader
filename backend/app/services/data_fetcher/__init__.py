@@ -151,7 +151,7 @@ class AggTradeData:
             "time": self.time,
             "price": self.price,
             "quantity": self.quantity,
-            "is_buyer_maker": self.is_buyer_maker,
+            "is_buyer_maker": int(self.is_buyer_maker),
         }
 
 

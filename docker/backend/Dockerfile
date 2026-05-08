@@ -21,4 +21,3 @@ COPY backend/pyproject.toml backend/poetry.lock* ./
 RUN poetry install --no-interaction --no-ansi --no-root
 
 COPY backend/ ./
-COPY .env .env

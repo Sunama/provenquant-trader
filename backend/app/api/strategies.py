@@ -6,7 +6,7 @@ import pkgutil
 from typing import Optional
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -17,6 +17,7 @@ from app.db.models.strategy_asset import StrategyAsset
 from app.db.models.strategy_config import StrategyConfig
 from app.db.models.strategy_exchange_ref import StrategyExchangeRef
 from app.db.session import SessionLocal
+from app.services.internal_data_fetcher import InternalDataFetcher
 from app.services.strategy_executer import StrategyExecuter
 
 router = APIRouter()
@@ -48,6 +49,7 @@ class StrategyConfigCreate(BaseModel):
     strategy_class: str
     description: Optional[str] = None
     enabled: bool = True
+    is_paper: bool = True
     params: dict = {}
     parameters_schema: Optional[list] = None
     signal_definitions: Optional[list] = None
@@ -59,6 +61,7 @@ class StrategyConfigUpdate(BaseModel):
     strategy_class: Optional[str] = None
     description: Optional[str] = None
     enabled: Optional[bool] = None
+    is_paper: Optional[bool] = None
     params: Optional[dict] = None
     parameters_schema: Optional[list] = None
     signal_definitions: Optional[list] = None
@@ -72,6 +75,7 @@ def _serialize(config: StrategyConfig) -> dict:
         "strategy_class": config.strategy_class,
         "description": config.description,
         "enabled": config.enabled,
+        "is_paper": config.is_paper,
         "params": config.params,
         "parameters_schema": config.parameters_schema,
         "signal_definitions": config.signal_definitions,
@@ -174,6 +178,29 @@ async def get_strategy_schema(class_path: str):
         raise HTTPException(status_code=404, detail=f"Cannot import: {e}")
 
 
+@router.get("/{strategy_id}/indicators")
+async def get_strategy_indicators(
+    strategy_id: str,
+    asset_slug: str,
+    timeframe: str,
+    limit: int = Query(default=200, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(StrategyConfig).where(StrategyConfig.id == strategy_id))
+    config = result.scalar_one_or_none()
+    if not config:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        module_path, class_name = config.strategy_class.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        strategy = getattr(module, class_name)(params=config.params)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot load strategy: {e}")
+
+    klines = await InternalDataFetcher().get_klines(asset_slug, timeframe, limit=limit)
+    return [s.to_dict() for s in strategy.indicators(klines)]
+
+
 @router.get("/{strategy_id}")
 async def get_strategy(strategy_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -198,6 +225,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
         strategy_class=body.strategy_class,
         description=body.description,
         enabled=body.enabled,
+        is_paper=body.is_paper,
         params=body.params or {},
         parameters_schema=body.parameters_schema,
         signal_definitions=body.signal_definitions,
@@ -240,6 +268,8 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
         config.description = body.description
     if body.enabled is not None:
         config.enabled = body.enabled
+    if body.is_paper is not None:
+        config.is_paper = body.is_paper
     if body.params is not None:
         config.params = body.params
     if body.parameters_schema is not None:

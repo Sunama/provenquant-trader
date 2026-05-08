@@ -20,6 +20,12 @@ echo -e "${BOLD}${CYAN}║      ProvenQuant Trader — Setup          ║${RESET
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
 
+# ── 0. Parse flags ───────────────────────────────────────────────────────────
+PROD_MODE=false
+for arg in "$@"; do
+    case $arg in --prod) PROD_MODE=true ;; esac
+done
+
 # ── 1. Check Docker ───────────────────────────────────────────────────────────
 step "Checking requirements"
 
@@ -45,9 +51,9 @@ fi
 
 # Prefer 'docker compose' (v2) plugin over legacy 'docker-compose' (v1)
 if $DOCKER compose version &>/dev/null 2>&1; then
-    COMPOSE="$DOCKER compose"
+    COMPOSE_BASE="$DOCKER compose"
 elif command -v docker-compose &>/dev/null; then
-    COMPOSE="${DOCKER%docker}docker-compose"   # keeps sudo prefix if present
+    COMPOSE_BASE="${DOCKER%docker}docker-compose"   # keeps sudo prefix if present
 else
     error "Docker Compose is not available."
     echo "  Please install Docker Desktop (it includes Compose)."
@@ -55,6 +61,14 @@ else
 fi
 
 success "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
+
+if [ "$PROD_MODE" = true ]; then
+    COMPOSE="$COMPOSE_BASE -f docker-compose.prod.yml"
+    warn "Environment: PRODUCTION"
+else
+    COMPOSE="$COMPOSE_BASE"
+    info "Environment: development"
+fi
 
 # ── 2. Create .env if missing ─────────────────────────────────────────────────
 step "Configuration"

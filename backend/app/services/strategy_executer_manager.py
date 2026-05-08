@@ -30,6 +30,7 @@ class _StrategyEntry:
     class_path: str
     params: dict | None
     assets: list[StrategyAssetConfig]
+    is_paper: bool = True
 
     def probe(self) -> StrategyExecuter:
         return self.cls(params=self.params, assets=self.assets)
@@ -49,7 +50,7 @@ class StrategyExecuterManager:
       5. Listen on Redis Pub/Sub "strategy:config_changed" for runtime reloads
     """
 
-    def __init__(self, fetcher_registry: dict[str, Type[DataFetcher]]) -> None:
+    def __init__(self, fetcher_registry: dict[str, dict[str, Type[DataFetcher]]]) -> None:
         self._fetcher_registry = fetcher_registry
         self._fetchers: dict[str, DataFetcher] = {}
         self._registry: dict[str, _StrategyEntry] = {}   # strategy_id → entry
@@ -117,6 +118,7 @@ class StrategyExecuterManager:
                     class_path=config.strategy_class,
                     params=config.params,
                     assets=asset_configs,
+                    is_paper=config.is_paper,
                 )
                 strategy_id = entry.probe().id
                 new_registry[strategy_id] = entry
@@ -129,40 +131,51 @@ class StrategyExecuterManager:
     # ── Fetcher management ────────────────────────────────────────
 
     async def _sync_fetchers(self) -> None:
-        """Create/update/stop DataFetchers to match current strategy + watched subscriptions."""
-        subs_by_exchange: dict[str, list[Subscription]] = {}
+        """Create/update/stop DataFetchers to match current strategy + watched subscriptions.
 
-        # Collect from active strategies
+        Fetchers are keyed by "{exchange}:{market_type}:{'paper'|'live'}" so that paper
+        strategies connect to Binance testnet and live strategies connect to mainnet.
+        """
+        grouped: dict[str, list[Subscription]] = {}
+        meta: dict[str, tuple[str, str, bool]] = {}  # key → (exchange, market_type, is_paper)
+
         for entry in self._registry.values():
             for sub in entry.probe().subscriptions:
-                subs_by_exchange.setdefault(sub.exchange, []).append(sub)
+                mode = "paper" if entry.is_paper else "live"
+                key = f"{sub.exchange}:{sub.market_type}:{mode}"
+                grouped.setdefault(key, []).append(sub)
+                meta[key] = (sub.exchange, sub.market_type, entry.is_paper)
 
-        # Merge WatchedAsset subscriptions
+        # WatchedAssets always use live (mainnet) connections
         try:
             from app.services.watched_asset_manager import WatchedAssetManager
             for sub in await WatchedAssetManager().get_subscriptions():
-                subs_by_exchange.setdefault(sub.exchange, []).append(sub)
+                key = f"{sub.exchange}:{sub.market_type}:live"
+                grouped.setdefault(key, []).append(sub)
+                meta[key] = (sub.exchange, sub.market_type, False)
         except Exception:
             logger.debug("WatchedAssetManager not available or empty")
 
-        for exchange, subs in subs_by_exchange.items():
-            if exchange not in self._fetchers:
-                if exchange not in self._fetcher_registry:
-                    logger.warning(f"No DataFetcher registered for exchange '{exchange}', skipping")
+        for key, subs in grouped.items():
+            exchange, market_type, is_paper = meta[key]
+            if key not in self._fetchers:
+                cls = self._fetcher_registry.get(exchange, {}).get(market_type)
+                if cls is None:
+                    logger.warning(f"No DataFetcher for '{exchange}:{market_type}', skipping")
                     continue
-                fetcher = self._fetcher_registry[exchange]()
+                fetcher = cls(testnet=is_paper)
                 fetcher.add_callback(self._make_tick_callback(exchange))
-                self._fetchers[exchange] = fetcher
+                self._fetchers[key] = fetcher
                 fetcher.set_subscriptions(self._dedupe(subs))
                 await fetcher.start()
-                logger.info(f"Started DataFetcher for exchange '{exchange}'")
+                logger.info(f"Started DataFetcher '{key}' (testnet={is_paper})")
             else:
-                self._fetchers[exchange].set_subscriptions(self._dedupe(subs))
+                self._fetchers[key].set_subscriptions(self._dedupe(subs))
 
-        stale = set(self._fetchers) - set(subs_by_exchange)
-        for exchange in stale:
-            await self._fetchers.pop(exchange).stop()
-            logger.info(f"Stopped DataFetcher for exchange '{exchange}' (no active strategies)")
+        stale = set(self._fetchers) - set(grouped)
+        for key in stale:
+            await self._fetchers.pop(key).stop()
+            logger.info(f"Stopped DataFetcher '{key}' (no active strategies)")
 
     @staticmethod
     def _dedupe(subs: list[Subscription]) -> list[Subscription]:
@@ -173,6 +186,7 @@ class StrategyExecuterManager:
         return list(seen.values())
 
     def _make_tick_callback(self, exchange: str) -> TickCallback:
+        # exchange arg kept for interface compatibility; dispatch matches on asset_slug+timeframe
         async def _on_tick(tick: TickData) -> None:
             await self._dispatch(tick, exchange)
         return _on_tick

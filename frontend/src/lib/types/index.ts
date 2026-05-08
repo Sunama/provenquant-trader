@@ -37,6 +37,7 @@ export interface Strategy {
   strategy_class: string;
   description?: string;
   enabled: boolean;
+  is_paper: boolean;
   params: Record<string, unknown>;
   parameters_schema?: ParameterSchema[];
   signal_definitions?: SignalDefinition[];
@@ -113,6 +114,18 @@ export interface Kline {
   low: number;
   close: number;
   volume: number;
+}
+
+export interface IndicatorPoint {
+  time: number;   // unix ms
+  value: number;
+}
+
+export interface IndicatorSeries {
+  name: string;
+  plot: "on_chart" | "oscillator";
+  color: string;
+  data: IndicatorPoint[];
 }
 
 // WebSocket message types

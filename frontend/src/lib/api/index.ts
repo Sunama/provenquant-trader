@@ -7,6 +7,7 @@ import type {
   WatchedAsset,
   Kline,
   StrategyClassInfo,
+  IndicatorSeries,
 } from "@/lib/types";
 
 // ── Strategies ─────────────────────────────────────────────
@@ -23,6 +24,14 @@ export const strategies = {
     api.get<{ id: string; parameter_schema: unknown[]; subscriptions_template: unknown[] }>(
       `/strategies/schema?class_path=${encodeURIComponent(classPath)}`
     ),
+  indicators: (strategyId: string, params: { asset_slug: string; timeframe: string; limit?: number }) => {
+    const q = new URLSearchParams(
+      Object.fromEntries(
+        Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
+      )
+    );
+    return api.get<IndicatorSeries[]>(`/strategies/${strategyId}/indicators?${q}`);
+  },
 };
 
 // ── Positions ─────────────────────────────────────────────
@@ -63,7 +72,11 @@ export const watchedAssets = {
 
 export const marketData = {
   klines: (params: { asset_slug: string; timeframe: string; exchange?: string; limit?: number }) => {
-    const q = new URLSearchParams(params as Record<string, string>);
+    const q = new URLSearchParams(
+      Object.fromEntries(
+        Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
+      )
+    );
     return api.get<Kline[]>(`/market-data/klines?${q}`);
   },
   orderbook: (asset_slug: string, exchange = "binance") =>

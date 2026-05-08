@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.services.data_fetcher.binance import BinanceDataFetcher
+from app.services.data_fetcher.binance import BinanceFuturesDataFetcher
+from app.services.data_fetcher.binance_spot import BinanceSpotDataFetcher
 from app.services.strategy_executer_manager import StrategyExecuterManager
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,12 @@ class Trader:
     """
 
     def __init__(self) -> None:
-        self._manager = StrategyExecuterManager({"binance": BinanceDataFetcher})
+        self._manager = StrategyExecuterManager({
+            "binance": {
+                "futures": BinanceFuturesDataFetcher,
+                "spot":    BinanceSpotDataFetcher,
+            },
+        })
 
     async def start(self) -> None:
         logger.info("Trader starting…")

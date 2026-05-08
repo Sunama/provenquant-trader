@@ -51,6 +51,28 @@ class StrategyAssetConfig:
     tick_process: bool
 
 
+@dataclass
+class IndicatorPoint:
+    time: int   # unix ms — matches TickData convention
+    value: float
+
+
+@dataclass
+class IndicatorSeries:
+    name: str
+    plot: str   # "on_chart" | "oscillator"
+    color: str = "#2196f3"
+    data: list[IndicatorPoint] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "plot": self.plot,
+            "color": self.color,
+            "data": [{"time": p.time, "value": p.value} for p in self.data],
+        }
+
+
 class StrategyExecuter(ABC):
     """
     Base class for all trading strategies.
@@ -93,6 +115,12 @@ class StrategyExecuter(ABC):
         Return an empty list to take no action.
         """
         ...
+
+    def indicators(self, klines: list) -> list[IndicatorSeries]:
+        """Override to return indicator series for chart display.
+        klines = list[Tick] from InternalDataFetcher.
+        """
+        return []
 
     @classmethod
     def _is_legacy(cls) -> bool:

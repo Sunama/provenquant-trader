@@ -51,6 +51,7 @@ export function StrategyEditor({ initial }: Props) {
   const [description, setDescription] = useState(initial?.description ?? "");
   const [classPath, setClassPath] = useState(initial?.strategy_class ?? "");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [isPaper, setIsPaper] = useState(initial?.is_paper ?? true);
   const [params, setParams] = useState<Record<string, unknown>>(initial?.params ?? {});
   const [assets, setAssets] = useState<Omit<StrategyAsset, "asset_num">[]>(
     initial?.assets.map(({ asset_num: _, ...a }) => a) ?? []
@@ -92,10 +93,11 @@ export function StrategyEditor({ initial }: Props) {
       strategy_class: classPath,
       description,
       enabled,
+      is_paper: isPaper,
       params,
       parameters_schema: schema?.parameter_schema,
       assets: assets.map((a, i) => ({ ...a, asset_num: i })),
-      exchange_accounts: exchangeRefs.map((r, i) => ({ ...r, exchange_num: i })),
+      exchange_accounts: isPaper ? [] : exchangeRefs.map((r, i) => ({ ...r, exchange_num: i })),
     };
     mutation.mutate(body);
   }
@@ -160,10 +162,26 @@ export function StrategyEditor({ initial }: Props) {
             className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          <span className="text-sm">Enabled</span>
-        </label>
+        <div className="flex items-center gap-6">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            <span className="text-sm">Enabled</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={isPaper}
+              onChange={(e) => {
+                setIsPaper(e.target.checked);
+                if (e.target.checked) setExchangeRefs([]);
+              }}
+            />
+            <span className="text-sm">Paper Trade</span>
+            <span className="text-xs text-muted-foreground">
+              {isPaper ? "(testnet — no exchange account required)" : "(mainnet — exchange account required)"}
+            </span>
+          </label>
+        </div>
       </section>
 
       {/* Section 2 — Parameters */}
@@ -268,8 +286,8 @@ export function StrategyEditor({ initial }: Props) {
         ))}
       </section>
 
-      {/* Section 4 — Exchange Accounts */}
-      <section className="space-y-4">
+      {/* Section 4 — Exchange Accounts (live only) */}
+      {!isPaper && <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Exchange Accounts</h2>
           <button
@@ -313,7 +331,7 @@ export function StrategyEditor({ initial }: Props) {
             </div>
           </div>
         ))}
-      </section>
+      </section>}
 
       <div className="flex gap-3">
         <button

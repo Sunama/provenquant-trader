@@ -14,6 +14,7 @@ from app.core.settings import settings
 import app.db.base  # noqa: F401 — registers all ORM models so relationships resolve
 from app.db.models.position import Position
 from app.db.models.strategy_asset import StrategyAsset
+from app.db.models.strategy_config import StrategyConfig
 from app.db.session import SessionLocal
 from app.services.strategy_executer import SignalSide, TradeSignal
 from app.services.trade_adapter.paper import PaperTradeAdapter
@@ -149,9 +150,13 @@ class TradeExecuterProcess:
         return "", ""
 
     async def _resolve_adapter(self, config_id: str, exchange_num: int) -> TradeAdapter:
-        # Currently always returns PaperTradeAdapter.
-        # Future: resolve ExchangeAccount by config_id + exchange_num,
-        # decrypt credentials, return real exchange adapter.
+        async with SessionLocal() as session:
+            config = await session.get(StrategyConfig, config_id)
+        if not config or config.is_paper:
+            return PaperTradeAdapter()
+        # TODO: resolve ExchangeAccount by config_id + exchange_num,
+        # decrypt credentials, and return a real exchange adapter.
+        logger.warning(f"Live adapter not implemented for config={config_id}, falling back to paper")
         return PaperTradeAdapter()
 
     async def _execute_signal(

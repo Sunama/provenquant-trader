@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { strategies, positions } from "@/lib/api";
+import { StrategyAssetChart } from "@/components/charts/StrategyAssetChart";
 import { useLiveDataStore } from "@/lib/store/useLiveDataStore";
 import { useShallow } from "zustand/react/shallow";
 import { formatPnl, formatPct } from "@/lib/utils";
@@ -25,7 +26,7 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
 
   const { data: positionList } = useQuery({
     queryKey: ["positions", id],
-    queryFn: () => positions.list({ strategy_id: id, limit: 50 }),
+    queryFn: () => positions.list({ strategy_id: id, limit: 200 }),
   });
 
   const recentSignals = useLiveDataStore(
@@ -80,22 +81,27 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
-      {strategy.assets.length > 0 && (
-        <div className="rounded-lg border bg-card p-5">
-          <p className="mb-3 text-sm font-semibold">Assets</p>
-          <div className="space-y-2">
-            {strategy.assets.map((a) => (
-              <div key={a.asset_num} className="flex items-center gap-3 text-sm">
-                <span className="font-mono text-muted-foreground">#{a.asset_num}</span>
-                <span className="font-semibold uppercase">{a.asset_slug}</span>
-                <span className="text-muted-foreground">{a.exchange} • {a.timeframe} • {a.market_type}</span>
-                {a.tick_process && <span className="text-xs rounded-full bg-primary/10 text-primary px-2 py-0.5">trigger</span>}
-                {a.description && <span className="text-muted-foreground">— {a.description}</span>}
-              </div>
-            ))}
+      {strategy.assets.map((asset) => (
+        <div key={asset.asset_num} className="rounded-lg border bg-card p-5">
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <p className="text-sm font-semibold uppercase">{asset.asset_slug}</p>
+            <span className="text-xs text-muted-foreground">
+              {asset.exchange} • {asset.timeframe} • {asset.market_type}
+            </span>
+            {asset.tick_process && (
+              <span className="text-xs rounded-full bg-primary/10 text-primary px-2 py-0.5">trigger</span>
+            )}
+            {asset.description && (
+              <span className="text-xs text-muted-foreground">— {asset.description}</span>
+            )}
           </div>
+          <StrategyAssetChart
+            strategyId={id}
+            asset={asset}
+            positions={positionList ?? []}
+          />
         </div>
-      )}
+      ))}
 
       {recentSignals.length > 0 && (
         <div className="rounded-lg border bg-card p-5">

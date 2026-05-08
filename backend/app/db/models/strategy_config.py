@@ -18,6 +18,7 @@ class StrategyConfig(Base):
     id: Mapped[str] = mapped_column(sa.String, primary_key=True)
     strategy_class: Mapped[str] = mapped_column(sa.String, nullable=False)
     enabled: Mapped[bool] = mapped_column(sa.Boolean, default=True)
+    is_paper: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default="true")
     description: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     params: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
     parameters_schema: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)

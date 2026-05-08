@@ -113,3 +113,16 @@ class RSIStrategy(StrategyExecuter):
                 )
             ]
         return []
+
+    def indicators(self, klines: list):
+        from app.services.strategy_executer import IndicatorSeries, IndicatorPoint
+        period = int(self.params.get("period", 14))
+        closes = [k.close for k in klines]
+        points = [
+            IndicatorPoint(
+                time=int(klines[i].time.timestamp() * 1000),
+                value=_rsi(closes[:i + 1], period),
+            )
+            for i in range(len(closes))
+        ]
+        return [IndicatorSeries(name=f"RSI({period})", plot="oscillator", color="#9c27b0", data=points)]
