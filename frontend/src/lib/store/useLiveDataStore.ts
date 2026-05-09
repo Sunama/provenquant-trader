@@ -9,12 +9,14 @@ interface LiveDataState {
   recentSignals: SignalPayload[];
   recentExecutions: ExecutionPayload[];
   lastBalance: number | null;
-  latestTicks: Record<string, TickPayload>;  // "slug:timeframe" → latest tick
+  latestTicks: Record<string, TickPayload>;   // "symbol:timeframe" → latest closed tick
+  livePrices: Record<string, TickPayload>;    // "symbol:timeframe" → latest unclosed bar
 
   addSignal: (s: SignalPayload) => void;
   addExecution: (e: ExecutionPayload) => void;
   setBalance: (b: number) => void;
   updateTick: (t: TickPayload) => void;
+  updateLivePrice: (t: TickPayload) => void;
 }
 
 export const useLiveDataStore = create<LiveDataState>((set) => ({
@@ -22,6 +24,7 @@ export const useLiveDataStore = create<LiveDataState>((set) => ({
   recentExecutions: [],
   lastBalance: null,
   latestTicks: {},
+  livePrices: {},
 
   addSignal: (s) =>
     set((state) => ({
@@ -39,7 +42,15 @@ export const useLiveDataStore = create<LiveDataState>((set) => ({
     set((state) => ({
       latestTicks: {
         ...state.latestTicks,
-        [`${t.asset_slug}:${t.timeframe}`]: t,
+        [`${t.symbol}:${t.timeframe}`]: t,
+      },
+    })),
+
+  updateLivePrice: (t) =>
+    set((state) => ({
+      livePrices: {
+        ...state.livePrices,
+        [`${t.symbol}:${t.timeframe}`]: t,
       },
     })),
 }));

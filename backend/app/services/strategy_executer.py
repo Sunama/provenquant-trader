@@ -1,33 +1,45 @@
 from __future__ import annotations
 
 import inspect
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+import redis.asyncio as aioredis
+
+from app.core.settings import settings
 from app.services.data_fetcher import Subscription, TickData
 
 
-class SignalSide(str, Enum):
-    LONG = "long"
-    SHORT = "short"
+class SignalAction(str, Enum):
+    # Spot & Options
     BUY = "buy"
     SELL = "sell"
-    CALL = "call"
-    PUT = "put"
+    # Futures
+    OPEN_LONG = "open_long"
+    CLOSE_LONG = "close_long"
+    OPEN_SHORT = "open_short"
+    CLOSE_SHORT = "close_short"
+
+
+class PriceMethod(str, Enum):
+    MARKET = "market"
+    LIMIT = "limit"
 
 
 @dataclass
 class TradeSignal:
-    execute: SignalSide
+    execute: SignalAction
     asset_num: int          # 0-based index into strategy's StrategyAsset list
     exchange_num: int       # 0-based index into strategy's ExchangeAccount list
-    market_type: str        # spot|futures|options
+    market_type: str        # spot | futures | options
     amount: float           # 0.0–1.0 fraction of available balance
+    price_method: PriceMethod = PriceMethod.MARKET
+    price: Optional[float] = None   # required when price_method=LIMIT
     tp_pct: Optional[float] = None
     sl_pct: Optional[float] = None
-    price: Optional[float] = None   # None = market order
     metadata: dict = field(default_factory=dict)
 
 
@@ -44,11 +56,13 @@ class ParameterSchema:
 @dataclass
 class StrategyAssetConfig:
     asset_num: int
-    asset_slug: str
+    symbol: str
     exchange: str
     timeframe: str
     market_type: str
     tick_process: bool
+    base_asset: str = ""
+    quote_asset: str = ""
 
 
 @dataclass
@@ -91,9 +105,11 @@ class StrategyExecuter(ABC):
         self,
         params: dict | None = None,
         assets: list[StrategyAssetConfig] | None = None,
+        config_id: str = "",
     ) -> None:
         self.params: dict = params or {}
         self.assets: list[StrategyAssetConfig] = assets or []
+        self.config_id: str = config_id   # DB StrategyConfig.id — used for Redis state keys
 
     @property
     @abstractmethod
@@ -121,6 +137,30 @@ class StrategyExecuter(ABC):
         klines = list[Tick] from InternalDataFetcher.
         """
         return []
+
+    # ── Persistent state helpers (Redis) ─────────────────────────
+
+    async def get_status(self) -> str:
+        """Return current strategy status from Redis (default: 'neutral')."""
+        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
+            return await r.get(f"strategy:status:{self.config_id}") or "neutral"
+
+    async def set_status(self, status: str) -> None:
+        """Persist strategy status to Redis."""
+        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
+            await r.set(f"strategy:status:{self.config_id}", status)
+
+    async def get_recent_closes(self, symbol: str, timeframe: str, limit: int) -> list[float]:
+        """Fetch recent close prices from Redis tick buffer (newest first → reversed for chronological)."""
+        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
+            raw_list = await r.lrange(f"tick:{symbol}:{timeframe}", 0, limit - 1)
+        closes: list[float] = []
+        for raw in reversed(raw_list):
+            try:
+                closes.append(float(json.loads(raw)["close"]))
+            except Exception:
+                pass
+        return closes
 
     @classmethod
     def _is_legacy(cls) -> bool:

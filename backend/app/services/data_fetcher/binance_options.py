@@ -68,7 +68,7 @@ class BinanceOptionsDataFetcher(DataFetcher):
         self._tasks["index"] = asyncio.create_task(self._index_task())
 
     def _option_symbols(self) -> list[str]:
-        return list({s.asset_slug.upper() for s in self._subscriptions.values()})
+        return list({s.symbol.upper() for s in self._subscriptions.values()})
 
     # ── Mark price + IV stream ────────────────────────────────────
 
@@ -104,7 +104,7 @@ class BinanceOptionsDataFetcher(DataFetcher):
                 symbol = item.get("s", "").lower()
                 ts = int(item.get("t", time.time() * 1000))
                 mark = MarkPriceData(
-                    asset_slug=symbol,
+                    symbol=symbol,
                     exchange="binance_options",
                     market_type="options",
                     time=ts,
@@ -116,7 +116,7 @@ class BinanceOptionsDataFetcher(DataFetcher):
                 # Emit as pseudo-tick for strategy consumption (close = mark price)
                 if item.get("mp"):
                     tick = TickData(
-                        asset_slug=symbol,
+                        symbol=symbol,
                         timeframe="1s",
                         time=ts,
                         open=float(item["mp"]),
@@ -124,6 +124,7 @@ class BinanceOptionsDataFetcher(DataFetcher):
                         low=float(item["mp"]),
                         close=float(item["mp"]),
                         volume=0.0,
+                        is_closed=True,
                     )
                     await self._emit(tick)
         except Exception:
@@ -164,7 +165,7 @@ class BinanceOptionsDataFetcher(DataFetcher):
             price = float(data.get("p", 0.0))
 
             mark = MarkPriceData(
-                asset_slug=f"{underlying}usdt",
+                symbol=f"{underlying}usdt",
                 exchange="binance_options",
                 market_type="options_index",
                 time=ts,

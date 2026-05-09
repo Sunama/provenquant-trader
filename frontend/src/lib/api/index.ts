@@ -8,6 +8,7 @@ import type {
   Kline,
   StrategyClassInfo,
   IndicatorSeries,
+  TradeHistory,
 } from "@/lib/types";
 
 // ── Strategies ─────────────────────────────────────────────
@@ -24,13 +25,19 @@ export const strategies = {
     api.get<{ id: string; parameter_schema: unknown[]; subscriptions_template: unknown[] }>(
       `/strategies/schema?class_path=${encodeURIComponent(classPath)}`
     ),
-  indicators: (strategyId: string, params: { asset_slug: string; timeframe: string; limit?: number }) => {
+  indicators: (strategyId: string, params: { symbol: string; timeframe: string; limit?: number }) => {
     const q = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
       )
     );
     return api.get<IndicatorSeries[]>(`/strategies/${strategyId}/indicators?${q}`);
+  },
+  validateSymbol: (params: { symbol: string; exchange: string; market_type: string }) => {
+    const q = new URLSearchParams(params);
+    return api.get<{ symbol: string; base_asset: string; quote_asset: string } | null>(
+      `/strategies/validate-symbol?${q}`
+    );
   },
 };
 
@@ -63,15 +70,15 @@ export const exchangeAccounts = {
 
 export const watchedAssets = {
   list: () => api.get<WatchedAsset[]>("/watched-assets/"),
-  create: (body: unknown) => api.post<{ id: number }>("/watched-assets/", body),
-  update: (id: number, body: unknown) => api.put<{ id: number }>(`/watched-assets/${id}`, body),
+  create: (body: unknown) => api.post<WatchedAsset>("/watched-assets/", body),
+  update: (id: number, body: unknown) => api.put<WatchedAsset>(`/watched-assets/${id}`, body),
   delete: (id: number) => api.delete<void>(`/watched-assets/${id}`),
 };
 
 // ── Market Data ───────────────────────────────────────────
 
 export const marketData = {
-  klines: (params: { asset_slug: string; timeframe: string; exchange?: string; limit?: number }) => {
+  klines: (params: { symbol: string; timeframe: string; exchange?: string; limit?: number }) => {
     const q = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
@@ -79,10 +86,22 @@ export const marketData = {
     );
     return api.get<Kline[]>(`/market-data/klines?${q}`);
   },
-  orderbook: (asset_slug: string, exchange = "binance") =>
+  orderbook: (symbol: string, exchange = "binance") =>
     api.get<{ bids: number[][]; asks: number[][]; time: number | null }>(
-      `/market-data/orderbook?asset_slug=${asset_slug}&exchange=${exchange}`
+      `/market-data/orderbook?symbol=${symbol}&exchange=${exchange}`
     ),
+};
+
+// ── Trade History ─────────────────────────────────────────
+
+export const tradeHistory = {
+  list: (params?: { strategy_id?: string; symbol?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.strategy_id) q.set("strategy_id", params.strategy_id);
+    if (params?.symbol) q.set("symbol", params.symbol);
+    if (params?.limit) q.set("limit", String(params.limit));
+    return api.get<TradeHistory[]>(`/trade-history/?${q}`);
+  },
 };
 
 // ── Trades / Balance ──────────────────────────────────────

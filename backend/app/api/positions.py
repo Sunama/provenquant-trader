@@ -22,7 +22,7 @@ def _serialize(r: Position) -> dict:
     return {
         "id": r.id,
         "strategy_id": r.strategy_id,
-        "asset_slug": r.asset_slug,
+        "symbol": r.symbol,
         "side": r.side,
         "entry_price": r.entry_price,
         "entry_time": r.entry_time.isoformat() if r.entry_time else None,

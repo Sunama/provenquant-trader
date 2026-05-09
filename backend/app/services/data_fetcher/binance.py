@@ -50,6 +50,9 @@ class BinanceBaseDataFetcher(DataFetcher):
     types (kline, aggTrade, depth) for all subscribed symbols.  Subclasses
     inject additional streams via _extra_streams() and route extra message
     types by overriding _dispatch_stream_msg().
+
+    Kline handler emits both closed bars (is_closed=True, triggers strategies)
+    and live bar updates (is_closed=False, for real-time chart display only).
     """
 
     def __init__(self, testnet: bool = False) -> None:
@@ -104,7 +107,7 @@ class BinanceBaseDataFetcher(DataFetcher):
     # ── URL / stream helpers ──────────────────────────────────────
 
     def _symbols(self) -> list[str]:
-        return list({s.asset_slug.lower() for s in self._subscriptions.values()})
+        return list({s.symbol.lower() for s in self._subscriptions.values()})
 
     def _extra_streams(self) -> list[str]:
         return []
@@ -114,7 +117,7 @@ class BinanceBaseDataFetcher(DataFetcher):
             return None
         streams: list[str] = []
         for sub in self._subscriptions.values():
-            streams.append(f"{sub.asset_slug.lower()}@kline_{_TF_MAP.get(sub.timeframe, '1m')}")
+            streams.append(f"{sub.symbol.lower()}@kline_{_TF_MAP.get(sub.timeframe, '1m')}")
         for sym in self._symbols():
             streams.append(f"{sym}@aggTrade")
             streams.append(f"{sym}@depth20@100ms")
@@ -164,23 +167,23 @@ class BinanceBaseDataFetcher(DataFetcher):
         seen: set[str] = set()
         async with httpx.AsyncClient(timeout=15) as client:
             for sub in list(self._subscriptions.values()):
-                key = f"{sub.asset_slug}:{sub.timeframe}"
+                key = f"{sub.symbol}:{sub.timeframe}"
                 if key in seen:
                     continue
                 seen.add(key)
                 interval = _TF_MAP.get(sub.timeframe, "1m")
-                symbol = sub.asset_slug.upper()
+                symbol_upper = sub.symbol.upper()
                 try:
                     resp = await client.get(
                         f"{self._rest_base}{self._klines_path}",
-                        params={"symbol": symbol, "interval": interval, "limit": 200},
+                        params={"symbol": symbol_upper, "interval": interval, "limit": 200},
                     )
                     if resp.status_code != 200:
-                        logger.warning(f"[backfill] {symbol} {interval} HTTP {resp.status_code}")
+                        logger.warning(f"[backfill] {symbol_upper} {interval} HTTP {resp.status_code}")
                         continue
                     rows = [
                         {
-                            "asset_slug": sub.asset_slug.lower(),
+                            "symbol": sub.symbol.lower(),
                             "timeframe": sub.timeframe,
                             "time": datetime.fromtimestamp(int(k[0]) / 1000, tz=timezone.utc),
                             "open": float(k[1]),
@@ -197,11 +200,11 @@ class BinanceBaseDataFetcher(DataFetcher):
                                 insert(Tick).values(rows).on_conflict_do_nothing(constraint="uq_tick")
                             )
                             await db.commit()
-                        logger.info(f"[backfill] {symbol} {interval}: seeded {len(rows)} bars")
+                        logger.info(f"[backfill] {symbol_upper} {interval}: seeded {len(rows)} bars")
                 except asyncio.CancelledError:
                     return
                 except Exception:
-                    logger.exception(f"[backfill] {symbol} {interval} failed")
+                    logger.exception(f"[backfill] {symbol_upper} {interval} failed")
 
     # ── Stream handlers ───────────────────────────────────────────
 
@@ -215,11 +218,11 @@ class BinanceBaseDataFetcher(DataFetcher):
             self._kline_msg_count += 1
             if self._kline_msg_count % 500 == 0:
                 logger.debug(f"[{self.__class__.__name__}] kline heartbeat: {self._kline_msg_count} messages")
-            if not kline.get("x"):  # only closed bars
-                return
+
             symbol = data.get("s", "").lower()
+            is_closed = bool(kline.get("x", False))
             tick = TickData(
-                asset_slug=symbol,
+                symbol=symbol,
                 timeframe=kline.get("i", "1m"),
                 time=int(kline["t"]),
                 open=float(kline["o"]),
@@ -227,8 +230,10 @@ class BinanceBaseDataFetcher(DataFetcher):
                 low=float(kline["l"]),
                 close=float(kline["c"]),
                 volume=float(kline["v"]),
+                is_closed=is_closed,
             )
-            logger.info(f"[bar] {tick.asset_slug} {tick.timeframe} close={tick.close:.4f} vol={tick.volume:.2f}")
+            if is_closed:
+                logger.info(f"[bar] {tick.symbol} {tick.timeframe} close={tick.close:.4f} vol={tick.volume:.2f}")
             await self._emit(tick)
         except Exception:
             logger.exception(f"[{self.__class__.__name__}] kline parse error")
@@ -240,7 +245,7 @@ class BinanceBaseDataFetcher(DataFetcher):
             if data.get("e") != "aggTrade":
                 return
             agg = AggTradeData(
-                asset_slug=data.get("s", "").lower(),
+                symbol=data.get("s", "").lower(),
                 exchange="binance",
                 time=int(data["T"]),
                 price=float(data["p"]),
@@ -260,7 +265,7 @@ class BinanceBaseDataFetcher(DataFetcher):
             if not symbol:
                 return
             book = OrderBookData(
-                asset_slug=symbol,
+                symbol=symbol,
                 exchange="binance",
                 time=int(data.get("T", time.time() * 1000)),
                 bids=data.get("b", [])[:20],
@@ -284,7 +289,7 @@ class BinanceBaseDataFetcher(DataFetcher):
                         if resp.status_code == 200:
                             body = resp.json()
                             oi = OpenInterestData(
-                                asset_slug=symbol,
+                                symbol=symbol,
                                 exchange="binance",
                                 time=int(body.get("time", time.time() * 1000)),
                                 oi_contracts=float(body.get("openInterest", 0)),
@@ -352,7 +357,7 @@ class BinanceFuturesDataFetcher(BinanceBaseDataFetcher):
             symbol = data.get("s", "").lower()
             ts = int(data.get("T", time.time() * 1000))
             mark = MarkPriceData(
-                asset_slug=symbol,
+                symbol=symbol,
                 exchange="binance",
                 market_type="futures",
                 time=ts,
@@ -363,7 +368,7 @@ class BinanceFuturesDataFetcher(BinanceBaseDataFetcher):
             funding_str = data.get("r", "")
             if funding_str:
                 funding = FundingRateData(
-                    asset_slug=symbol,
+                    symbol=symbol,
                     exchange="binance",
                     time=ts,
                     rate=float(funding_str),
@@ -400,7 +405,7 @@ class BinanceFuturesDataFetcher(BinanceBaseDataFetcher):
                 return
             side_raw = data.get("S", "")
             liq = LiquidationData(
-                asset_slug=symbol,
+                symbol=symbol,
                 exchange="binance",
                 time=int(data.get("T", time.time() * 1000)),
                 side="short_liq" if side_raw == "BUY" else "long_liq",

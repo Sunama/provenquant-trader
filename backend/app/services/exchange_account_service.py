@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import text, select, delete
@@ -8,6 +9,9 @@ from app.core.settings import settings
 from app.db.models.exchange_account import ExchangeAccount
 from app.db.models.strategy_exchange_ref import StrategyExchangeRef
 from app.db.session import SessionLocal
+from app.services.trade_adapter import OrderRecord, PositionInfo
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -175,3 +179,71 @@ class ExchangeAccountService:
         if len(key) <= 8:
             return "*" * len(key)
         return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
+
+    # ── Balance & order reading ───────────────────────────────────
+
+    async def get_balances(self, account_id: str) -> dict[str, float]:
+        """Return all non-zero asset balances for the account."""
+        account = await self.get_by_id(account_id)
+        if account.is_paper:
+            from app.services.trade_adapter.paper import PaperTradeAdapter
+            return await PaperTradeAdapter(config_id=account_id).get_all_balances()
+        logger.warning(f"Live balance fetch not implemented for account {account_id}")
+        return {}
+
+    async def get_asset_balance(self, account_id: str, asset: str) -> float:
+        """Return balance of a specific asset."""
+        account = await self.get_by_id(account_id)
+        if account.is_paper:
+            from app.services.trade_adapter.paper import PaperTradeAdapter
+            return await PaperTradeAdapter(config_id=account_id).get_asset_balance(asset)
+        logger.warning(f"Live balance fetch not implemented for account {account_id}")
+        return 0.0
+
+    async def get_order_history(
+        self, account_id: str, symbol: str, limit: int = 50
+    ) -> list[OrderRecord]:
+        """Return recent closed orders for symbol."""
+        account = await self.get_by_id(account_id)
+        if account.is_paper:
+            from app.services.trade_adapter.paper import PaperTradeAdapter
+            return await PaperTradeAdapter(config_id=account_id).get_order_history(symbol, limit)
+        logger.warning(f"Live order history not implemented for account {account_id}")
+        return []
+
+    async def get_open_orders(self, account_id: str, symbol: str) -> list[OrderRecord]:
+        """Return pending (unfilled) orders for symbol."""
+        account = await self.get_by_id(account_id)
+        if account.is_paper:
+            import json
+            from app.services.trade_adapter.paper import PaperTradeAdapter
+            adapter = PaperTradeAdapter(config_id=account_id)
+            r_client = await adapter._get_redis()
+            order_ids = await r_client.smembers(adapter._pending_set())
+            orders: list[OrderRecord] = []
+            for oid in order_ids:
+                raw = await r_client.get(adapter._pending_key(oid))
+                if raw:
+                    o = json.loads(raw)
+                    if o.get("symbol") == symbol:
+                        orders.append(OrderRecord(
+                            order_id=oid,
+                            symbol=o["symbol"],
+                            side=o["side"],
+                            order_type="limit",
+                            price=float(o["limit_price"]),
+                            size=float(o["size"]),
+                            status="pending",
+                            created_at=o.get("created_at", ""),
+                        ))
+            return orders
+        logger.warning(f"Live open orders not implemented for account {account_id}")
+        return []
+
+    async def get_positions(self, account_id: str) -> list[PositionInfo]:
+        """Return open positions (live only; paper positions are in the positions table)."""
+        account = await self.get_by_id(account_id)
+        if account.is_paper:
+            return []
+        logger.warning(f"Live positions not implemented for account {account_id}")
+        return []

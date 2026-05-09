@@ -25,7 +25,7 @@ class WatchedAssetManager:
             for timeframe in (asset.timeframes or []):
                 subscriptions.append(
                     Subscription(
-                        asset_slug=asset.asset_slug,
+                        symbol=asset.symbol,
                         exchange=asset.exchange,
                         timeframe=timeframe,
                         market_type=asset.market_type,

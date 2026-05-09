@@ -62,7 +62,7 @@ function PositionRow({ pos }: { pos: Position }) {
   return (
     <tr className="border-b text-sm last:border-0 hover:bg-accent/30">
       <td className="py-2 px-3 font-mono text-xs text-muted-foreground">{pos.id}</td>
-      <td className="py-2 px-3 font-medium">{pos.asset_slug.toUpperCase()}</td>
+      <td className="py-2 px-3 font-medium">{pos.symbol.toUpperCase()}</td>
       <td className="py-2 px-3">
         <span className={cn(
           "rounded-full px-2 py-0.5 text-xs font-medium",

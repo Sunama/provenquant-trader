@@ -52,7 +52,7 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
                   key={a.asset_num}
                   className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium"
                 >
-                  {a.asset_slug.toUpperCase()} {a.timeframe} ({a.market_type})
+                  {a.symbol.toUpperCase()} {a.timeframe} ({a.market_type})
                 </span>
               ))}
             </div>

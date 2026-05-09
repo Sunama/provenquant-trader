@@ -29,7 +29,7 @@ class InternalDataFetcher:
 
     async def get_klines(
         self,
-        asset_slug: str,
+        symbol: str,
         timeframe: str,
         exchange: str = "binance",
         limit: int = 200,
@@ -39,7 +39,7 @@ class InternalDataFetcher:
             stmt = (
                 select(Tick)
                 .where(
-                    Tick.asset_slug == asset_slug,
+                    Tick.symbol == symbol,
                     Tick.timeframe == timeframe,
                 )
                 .order_by(desc(Tick.time))
@@ -53,14 +53,14 @@ class InternalDataFetcher:
 
     async def get_funding_rates(
         self,
-        asset_slug: str,
+        symbol: str,
         exchange: str = "binance",
         limit: int = 50,
     ) -> list[FundingRate]:
         async with SessionLocal() as session:
             result = await session.execute(
                 select(FundingRate)
-                .where(FundingRate.asset_slug == asset_slug, FundingRate.exchange == exchange)
+                .where(FundingRate.symbol == symbol, FundingRate.exchange == exchange)
                 .order_by(desc(FundingRate.time))
                 .limit(limit)
             )
@@ -69,7 +69,7 @@ class InternalDataFetcher:
 
     async def get_mark_prices(
         self,
-        asset_slug: str,
+        symbol: str,
         exchange: str = "binance",
         market_type: str = "futures",
         limit: int = 200,
@@ -78,7 +78,7 @@ class InternalDataFetcher:
             result = await session.execute(
                 select(MarkPrice)
                 .where(
-                    MarkPrice.asset_slug == asset_slug,
+                    MarkPrice.symbol == symbol,
                     MarkPrice.exchange == exchange,
                     MarkPrice.market_type == market_type,
                 )
@@ -90,14 +90,14 @@ class InternalDataFetcher:
 
     async def get_open_interest(
         self,
-        asset_slug: str,
+        symbol: str,
         exchange: str = "binance",
         limit: int = 50,
     ) -> list[OpenInterest]:
         async with SessionLocal() as session:
             result = await session.execute(
                 select(OpenInterest)
-                .where(OpenInterest.asset_slug == asset_slug, OpenInterest.exchange == exchange)
+                .where(OpenInterest.symbol == symbol, OpenInterest.exchange == exchange)
                 .order_by(desc(OpenInterest.time))
                 .limit(limit)
             )
@@ -106,7 +106,7 @@ class InternalDataFetcher:
 
     async def get_orderbook(
         self,
-        asset_slug: str,
+        symbol: str,
         exchange: str = "binance",
     ) -> Optional[OrderBookData]:
         """Returns latest order book snapshot from Redis (not persisted to Postgres)."""
@@ -115,13 +115,13 @@ class InternalDataFetcher:
 
         r = await aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         try:
-            key = f"orderbook:{asset_slug}:{exchange}"
+            key = f"orderbook:{symbol}:{exchange}"
             raw = await r.get(key)
             if not raw:
                 return None
             data = json.loads(raw)
             return OrderBookData(
-                asset_slug=asset_slug,
+                symbol=symbol,
                 exchange=exchange,
                 time=data.get("time", 0),
                 bids=data.get("bids", []),

@@ -11,7 +11,13 @@ import redis.asyncio as aioredis
 from app.core.celery_app import celery_app
 from app.core.settings import settings
 from app.services.data_fetcher import TickData
-from app.services.strategy_executer import StrategyExecuter, StrategyAssetConfig, TradeSignal
+from app.services.strategy_executer import (
+    PriceMethod,
+    SignalAction,
+    StrategyAssetConfig,
+    StrategyExecuter,
+    TradeSignal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +51,13 @@ def run_strategy(
             assets = [
                 StrategyAssetConfig(
                     asset_num=a["asset_num"],
-                    asset_slug=a["asset_slug"],
+                    symbol=a.get("symbol", a.get("asset_slug", "")),
                     exchange=a["exchange"],
                     timeframe=a["timeframe"],
                     market_type=a["market_type"],
                     tick_process=a["tick_process"],
+                    base_asset=a.get("base_asset", ""),
+                    quote_asset=a.get("quote_asset", ""),
                 )
                 for a in (assets_dicts or [])
             ]
@@ -58,7 +66,7 @@ def run_strategy(
             module = importlib.import_module(module_path)
             strategy_cls: type[StrategyExecuter] = getattr(module, class_name)
 
-            strategy = strategy_cls(params=params, assets=assets)
+            strategy = strategy_cls(params=params, assets=assets, config_id=config_id)
             signals = await _call_execute(strategy, tick, asset_num)
 
             if not signals:
@@ -90,10 +98,13 @@ async def _call_execute(
         result = await strategy.execute(tick)  # type: ignore[call-arg]
         if result is None:
             return []
-        # Wrap old-style single signal into new format
-        from app.services.strategy_executer import SignalSide
-        old_side = result.side if hasattr(result, "side") else "long"
-        execute = SignalSide(old_side) if isinstance(old_side, str) else old_side
+        old_side = result.side if hasattr(result, "side") else "open_long"
+        try:
+            execute = SignalAction(old_side)
+        except ValueError:
+            # Map old SignalSide values to new SignalAction
+            _map = {"long": "open_long", "short": "open_short", "buy": "buy", "sell": "sell"}
+            execute = SignalAction(_map.get(old_side, "open_long"))
         return [
             TradeSignal(
                 execute=execute,
@@ -104,7 +115,8 @@ async def _call_execute(
                 tp_pct=getattr(result, "tp_pct", None),
                 sl_pct=getattr(result, "sl_pct", None),
                 price=getattr(result, "price", None),
-                metadata={"asset_slug": getattr(result, "asset_slug", ""), "timeframe": getattr(result, "timeframe", "")},
+                metadata={"symbol": getattr(result, "symbol", getattr(result, "asset_slug", "")),
+                          "timeframe": getattr(result, "timeframe", "")},
             )
         ]
     return await strategy.execute(tick, asset_num)
@@ -127,6 +139,7 @@ async def _publish_signals(
             "exchange_num": str(sig.exchange_num),
             "market_type": sig.market_type,
             "amount": str(sig.amount),
+            "price_method": sig.price_method.value,
             "tp_pct": str(sig.tp_pct) if sig.tp_pct is not None else "",
             "sl_pct": str(sig.sl_pct) if sig.sl_pct is not None else "",
             "price": str(sig.price) if sig.price is not None else str(tick.close),

@@ -7,16 +7,13 @@ Assets required:
 
 Signals:
   When the BTC/ETH ratio deviates > 2 std from rolling mean → enter pair trade:
-    LONG BTC (asset_num=0) + SHORT ETH (asset_num=1) when ratio is low
-    SHORT BTC + LONG ETH when ratio is high
+    OPEN_LONG BTC (asset_num=0) + OPEN_SHORT ETH (asset_num=1) when ratio is low
+    OPEN_SHORT BTC + OPEN_LONG ETH when ratio is high
 
 Register:
     python tasks.py start-trader --strategy strategies.example_pair_trade.PairTradeStrategy
 """
 from __future__ import annotations
-
-from collections import deque
-from typing import Optional
 
 import numpy as np
 
@@ -24,7 +21,7 @@ from app.services.data_fetcher import Subscription, TickData
 from app.services.internal_data_fetcher import InternalDataFetcher
 from app.services.strategy_executer import (
     ParameterSchema,
-    SignalSide,
+    SignalAction,
     StrategyExecuter,
     TradeSignal,
 )
@@ -51,9 +48,9 @@ class PairTradeStrategy(StrategyExecuter):
     @property
     def subscriptions(self) -> list[Subscription]:
         return [
-            Subscription(asset_slug="btcusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=True,
+            Subscription(symbol="btcusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=True,
                          description="Primary asset — this tick triggers execution; long when ratio is low"),
-            Subscription(asset_slug="ethusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=False,
+            Subscription(symbol="ethusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=False,
                          description="Counter asset — moves inversely to primary; short when primary is long"),
         ]
 
@@ -90,12 +87,12 @@ class PairTradeStrategy(StrategyExecuter):
         if z < -z_threshold:
             # BTC is cheap relative to ETH: long BTC, short ETH
             return [
-                TradeSignal(execute=SignalSide.LONG, asset_num=0, exchange_num=0, market_type="futures", amount=amount, price=tick.close),
-                TradeSignal(execute=SignalSide.SHORT, asset_num=1, exchange_num=0, market_type="futures", amount=amount),
+                TradeSignal(execute=SignalAction.OPEN_LONG, asset_num=0, exchange_num=0, market_type="futures", amount=amount),
+                TradeSignal(execute=SignalAction.OPEN_SHORT, asset_num=1, exchange_num=0, market_type="futures", amount=amount),
             ]
         else:
             # BTC is expensive relative to ETH: short BTC, long ETH
             return [
-                TradeSignal(execute=SignalSide.SHORT, asset_num=0, exchange_num=0, market_type="futures", amount=amount, price=tick.close),
-                TradeSignal(execute=SignalSide.LONG, asset_num=1, exchange_num=0, market_type="futures", amount=amount),
+                TradeSignal(execute=SignalAction.OPEN_SHORT, asset_num=0, exchange_num=0, market_type="futures", amount=amount),
+                TradeSignal(execute=SignalAction.OPEN_LONG, asset_num=1, exchange_num=0, market_type="futures", amount=amount),
             ]

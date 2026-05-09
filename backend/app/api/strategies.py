@@ -19,6 +19,7 @@ from app.db.models.strategy_exchange_ref import StrategyExchangeRef
 from app.db.session import SessionLocal
 from app.services.internal_data_fetcher import InternalDataFetcher
 from app.services.strategy_executer import StrategyExecuter
+from app.services.symbol_validator import validate_symbol
 
 router = APIRouter()
 
@@ -31,7 +32,7 @@ async def get_db():
 # ── Pydantic schemas ─────────────────────────────────────────
 
 class StrategyAssetIn(BaseModel):
-    asset_slug: str
+    symbol: str
     exchange: str
     timeframe: str
     market_type: str
@@ -84,12 +85,14 @@ def _serialize(config: StrategyConfig) -> dict:
         "assets": [
             {
                 "asset_num": a.asset_num,
-                "asset_slug": a.asset_slug,
+                "symbol": a.symbol,
                 "exchange": a.exchange,
                 "timeframe": a.timeframe,
                 "market_type": a.market_type,
                 "tick_process": a.tick_process,
                 "description": a.description,
+                "base_asset": a.base_asset,
+                "quote_asset": a.quote_asset,
             }
             for a in (config.assets or [])
         ],
@@ -108,6 +111,20 @@ async def _notify_trader() -> None:
     r = await aioredis.from_url(settings.REDIS_URL, decode_responses=True)
     await r.publish("strategy:config_changed", "")
     await r.aclose()
+
+
+async def _validate_assets(assets: list[StrategyAssetIn]) -> dict[int, tuple[str, str]]:
+    """Validate all asset symbols. Returns {index: (base_asset, quote_asset)} on success."""
+    result: dict[int, tuple[str, str]] = {}
+    for i, asset in enumerate(assets):
+        info = await validate_symbol(asset.symbol, asset.exchange, asset.market_type)
+        if info is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Asset #{i}: symbol '{asset.symbol}' not found on {asset.exchange} {asset.market_type}",
+            )
+        result[i] = (info.base_asset, info.quote_asset)
+    return result
 
 
 # ── Endpoints ─────────────────────────────────────────────────
@@ -147,7 +164,7 @@ async def list_strategy_classes():
                         schema = [s.__dict__ for s in instance.parameter_schema] if hasattr(instance, "parameter_schema") else []
                         default_subs = [
                             {
-                                "asset_slug": s.asset_slug,
+                                "symbol": s.symbol,
                                 "exchange": s.exchange,
                                 "timeframe": s.timeframe,
                                 "market_type": s.market_type,
@@ -164,6 +181,19 @@ async def list_strategy_classes():
     return classes
 
 
+@router.get("/validate-symbol")
+async def validate_symbol_endpoint(
+    symbol: str,
+    exchange: str = "binance",
+    market_type: str = "futures",
+):
+    """Check whether a symbol exists on an exchange and return its base/quote assets."""
+    info = await validate_symbol(symbol, exchange, market_type)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found on {exchange} {market_type}")
+    return {"symbol": info.symbol, "base_asset": info.base_asset, "quote_asset": info.quote_asset}
+
+
 @router.get("/schema")
 async def get_strategy_schema(class_path: str):
     """Introspect a strategy class and return its parameter schema."""
@@ -176,7 +206,14 @@ async def get_strategy_schema(class_path: str):
         instance = cls()
         schema = [s.__dict__ for s in instance.parameter_schema] if hasattr(instance, "parameter_schema") else []
         subs = [
-            {"asset_slug": s.asset_slug, "exchange": s.exchange, "timeframe": s.timeframe, "market_type": s.market_type, "tick_process": s.tick_process}
+            {
+                "symbol": s.symbol,
+                "exchange": s.exchange,
+                "timeframe": s.timeframe,
+                "market_type": s.market_type,
+                "tick_process": s.tick_process,
+                "description": s.description,
+            }
             for s in instance.subscriptions
         ] if hasattr(instance, "subscriptions") else []
         return {"id": instance.id, "parameter_schema": schema, "subscriptions_template": subs}
@@ -187,7 +224,7 @@ async def get_strategy_schema(class_path: str):
 @router.get("/{strategy_id}/indicators")
 async def get_strategy_indicators(
     strategy_id: str,
-    asset_slug: str,
+    symbol: str,
     timeframe: str,
     limit: int = Query(default=200, le=500),
     db: AsyncSession = Depends(get_db),
@@ -203,7 +240,7 @@ async def get_strategy_indicators(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Cannot load strategy: {e}")
 
-    klines = await InternalDataFetcher().get_klines(asset_slug, timeframe, limit=limit)
+    klines = await InternalDataFetcher().get_klines(symbol, timeframe, limit=limit)
     return [s.to_dict() for s in strategy.indicators(klines)]
 
 
@@ -226,6 +263,8 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
     if existing:
         raise HTTPException(status_code=409, detail="Strategy ID already exists")
 
+    asset_info = await _validate_assets(body.assets)
+
     config = StrategyConfig(
         id=body.id,
         strategy_class=body.strategy_class,
@@ -239,10 +278,18 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
     db.add(config)
 
     for i, asset_in in enumerate(body.assets):
+        base_asset, quote_asset = asset_info[i]
         db.add(StrategyAsset(
             strategy_id=body.id,
             asset_num=i,
-            **asset_in.model_dump(),
+            symbol=asset_in.symbol,
+            exchange=asset_in.exchange,
+            timeframe=asset_in.timeframe,
+            market_type=asset_in.market_type,
+            tick_process=asset_in.tick_process,
+            description=asset_in.description,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
         ))
 
     for i, ref_in in enumerate(body.exchange_accounts):
@@ -285,10 +332,23 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
         config.signal_definitions = body.signal_definitions
 
     if body.assets is not None:
+        asset_info = await _validate_assets(body.assets)
         for asset in config.assets:
             await db.delete(asset)
         for i, asset_in in enumerate(body.assets):
-            db.add(StrategyAsset(strategy_id=strategy_id, asset_num=i, **asset_in.model_dump()))
+            base_asset, quote_asset = asset_info[i]
+            db.add(StrategyAsset(
+                strategy_id=strategy_id,
+                asset_num=i,
+                symbol=asset_in.symbol,
+                exchange=asset_in.exchange,
+                timeframe=asset_in.timeframe,
+                market_type=asset_in.market_type,
+                tick_process=asset_in.tick_process,
+                description=asset_in.description,
+                base_asset=base_asset,
+                quote_asset=quote_asset,
+            ))
 
     if body.exchange_accounts is not None:
         for ref in config.exchange_refs:

@@ -1,21 +1,18 @@
 """
-Example strategy: simple RSI mean-reversion (updated for new multi-asset architecture).
+Example strategy: simple RSI mean-reversion (futures, status-aware).
 
 Register via StrategyConfig with:
   strategy_class = "strategies.example_rsi.RSIStrategy"
-  assets = [{ asset_slug: "btcusdt", exchange: "binance", timeframe: "30m", market_type: "futures", tick_process: true }]
+  assets = [{ symbol: "btcusdt", exchange: "binance", timeframe: "30m", market_type: "futures", tick_process: true }]
   params = { "period": 14, "oversold": 30, "overbought": 70, "amount": 0.5 }
 """
 from __future__ import annotations
 
-from collections import deque
-
-import numpy as np
-
 from app.services.data_fetcher import Subscription, TickData
 from app.services.strategy_executer import (
     ParameterSchema,
-    SignalSide,
+    PriceMethod,
+    SignalAction,
     StrategyAssetConfig,
     StrategyExecuter,
     TradeSignal,
@@ -23,6 +20,7 @@ from app.services.strategy_executer import (
 
 
 def _rsi(closes: list[float], period: int = 14) -> float:
+    import numpy as np
     if len(closes) < period + 1:
         return 50.0
     deltas = np.diff(closes[-(period + 1):])
@@ -35,12 +33,14 @@ def _rsi(closes: list[float], period: int = 14) -> float:
 
 
 class RSIStrategy(StrategyExecuter):
-    """Go long when RSI < oversold threshold, short when RSI > overbought threshold."""
+    """
+    Go long when RSI < oversold threshold, short when RSI > overbought threshold.
 
-    def __init__(self, params: dict | None = None, assets: list[StrategyAssetConfig] | None = None) -> None:
-        super().__init__(params, assets)
-        period = self.params.get("period", 14)
-        self._closes: deque[float] = deque(maxlen=int(period) + 10)
+    Uses StrategyStatus to avoid re-entering the same position direction and to
+    emit explicit OPEN/CLOSE signals for futures trading.
+
+    Status values: "neutral" | "long" | "short"
+    """
 
     @property
     def id(self) -> str:
@@ -50,8 +50,8 @@ class RSIStrategy(StrategyExecuter):
     def parameter_schema(self) -> list[ParameterSchema]:
         return [
             ParameterSchema(name="period", type="int", default=14, min=2, max=100, description="RSI lookback period"),
-            ParameterSchema(name="oversold", type="float", default=30.0, min=10.0, max=50.0, description="RSI oversold threshold → LONG signal"),
-            ParameterSchema(name="overbought", type="float", default=70.0, min=50.0, max=90.0, description="RSI overbought threshold → SHORT signal"),
+            ParameterSchema(name="oversold", type="float", default=30.0, min=10.0, max=50.0, description="RSI oversold threshold → OPEN LONG signal"),
+            ParameterSchema(name="overbought", type="float", default=70.0, min=50.0, max=90.0, description="RSI overbought threshold → OPEN SHORT signal"),
             ParameterSchema(name="amount", type="float", default=0.5, min=0.01, max=1.0, description="Fraction of available balance to use"),
             ParameterSchema(name="tp_pct", type="float", default=0.02, min=0.001, max=0.5, description="Take-profit %"),
             ParameterSchema(name="sl_pct", type="float", default=0.01, min=0.001, max=0.5, description="Stop-loss %"),
@@ -59,11 +59,10 @@ class RSIStrategy(StrategyExecuter):
 
     @property
     def subscriptions(self) -> list[Subscription]:
-        # Use configured assets if available; fall back to default
         if self.assets:
             return [
                 Subscription(
-                    asset_slug=a.asset_slug,
+                    symbol=a.symbol,
                     timeframe=a.timeframe,
                     exchange=a.exchange,
                     market_type=a.market_type,
@@ -72,7 +71,7 @@ class RSIStrategy(StrategyExecuter):
                 for a in self.assets
             ]
         return [
-            Subscription(asset_slug="btcusdt", timeframe="30m", exchange="binance", market_type="futures", tick_process=True)
+            Subscription(symbol="btcusdt", timeframe="30m", exchange="binance", market_type="futures", tick_process=True)
         ]
 
     async def execute(self, tick: TickData, asset_num: int = 0) -> list[TradeSignal]:
@@ -83,35 +82,68 @@ class RSIStrategy(StrategyExecuter):
         tp_pct: float = float(self.params.get("tp_pct", 0.02))
         sl_pct: float = float(self.params.get("sl_pct", 0.01))
 
-        self._closes.append(tick.close)
-        rsi = _rsi(list(self._closes), period)
+        # Fetch recent closes from Redis (survives across ephemeral Celery task instances)
+        closes = await self.get_recent_closes(tick.symbol, tick.timeframe, period + 10)
+        rsi = _rsi(closes, period)
 
-        if rsi < oversold:
-            return [
-                TradeSignal(
-                    execute=SignalSide.LONG,
+        status = await self.get_status()
+
+        if rsi < oversold and status != "long":
+            signals: list[TradeSignal] = []
+            # Close short position first if currently short
+            if status == "short":
+                signals.append(TradeSignal(
+                    execute=SignalAction.CLOSE_SHORT,
                     asset_num=asset_num,
                     exchange_num=0,
                     market_type="futures",
-                    amount=amount,
-                    tp_pct=tp_pct,
-                    sl_pct=sl_pct,
+                    amount=1.0,
+                    price_method=PriceMethod.MARKET,
                     price=tick.close,
-                )
-            ]
-        if rsi > overbought:
-            return [
-                TradeSignal(
-                    execute=SignalSide.SHORT,
+                ))
+            # Open long
+            signals.append(TradeSignal(
+                execute=SignalAction.OPEN_LONG,
+                asset_num=asset_num,
+                exchange_num=0,
+                market_type="futures",
+                amount=amount,
+                price_method=PriceMethod.MARKET,
+                price=tick.close,
+                tp_pct=tp_pct,
+                sl_pct=sl_pct,
+            ))
+            await self.set_status("long")
+            return signals
+
+        if rsi > overbought and status != "short":
+            signals = []
+            # Close long position first if currently long
+            if status == "long":
+                signals.append(TradeSignal(
+                    execute=SignalAction.CLOSE_LONG,
                     asset_num=asset_num,
                     exchange_num=0,
                     market_type="futures",
-                    amount=amount,
-                    tp_pct=tp_pct,
-                    sl_pct=sl_pct,
+                    amount=1.0,
+                    price_method=PriceMethod.MARKET,
                     price=tick.close,
-                )
-            ]
+                ))
+            # Open short
+            signals.append(TradeSignal(
+                execute=SignalAction.OPEN_SHORT,
+                asset_num=asset_num,
+                exchange_num=0,
+                market_type="futures",
+                amount=amount,
+                price_method=PriceMethod.MARKET,
+                price=tick.close,
+                tp_pct=tp_pct,
+                sl_pct=sl_pct,
+            ))
+            await self.set_status("short")
+            return signals
+
         return []
 
     def indicators(self, klines: list):

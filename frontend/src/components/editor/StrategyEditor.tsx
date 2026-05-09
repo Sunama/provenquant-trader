@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Plus, Trash2, GripVertical } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { strategies, exchangeAccounts } from "@/lib/api";
 import type { Strategy, StrategyAsset, StrategyExchangeRef, ParameterSchema } from "@/lib/types";
@@ -43,6 +43,62 @@ function ParameterInput({ schema, value, onChange }: { schema: ParameterSchema; 
   );
 }
 
+// initial_assets is stored in params as { USDT: 10000, BTC: 0 }
+function InitialAssetsEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, number>;
+  onChange: (v: Record<string, number>) => void;
+}) {
+  const entries = Object.entries(value);
+  return (
+    <div className="space-y-2">
+      {entries.map(([asset, qty]) => (
+        <div key={asset} className="flex items-center gap-2">
+          <input
+            value={asset}
+            onChange={(e) => {
+              const next = { ...value };
+              delete next[asset];
+              next[e.target.value] = qty;
+              onChange(next);
+            }}
+            placeholder="USDT"
+            className="w-24 rounded-md border px-2 py-1.5 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={qty}
+            onChange={(e) => onChange({ ...value, [asset]: parseFloat(e.target.value) || 0 })}
+            className="flex-1 rounded-md border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const next = { ...value };
+              delete next[asset];
+              onChange(next);
+            }}
+          >
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange({ ...value, "": 0 })}
+        className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
+      >
+        <Plus className="h-3 w-3" />
+        Add asset
+      </button>
+    </div>
+  );
+}
+
 export function StrategyEditor({ initial }: Props) {
   const router = useRouter();
   const isEdit = !!initial;
@@ -59,6 +115,10 @@ export function StrategyEditor({ initial }: Props) {
   const [exchangeRefs, setExchangeRefs] = useState<Omit<StrategyExchangeRef, "exchange_num">[]>(
     initial?.exchange_accounts.map(({ exchange_num: _, ...r }) => r) ?? []
   );
+
+  const initialAssets = (params.initial_assets as Record<string, number> | undefined) ?? {};
+  const setInitialAssets = (v: Record<string, number>) =>
+    setParams((prev) => ({ ...prev, initial_assets: v }));
 
   const { data: classes } = useQuery({
     queryKey: ["strategy-classes"],
@@ -102,6 +162,9 @@ export function StrategyEditor({ initial }: Props) {
     mutation.mutate(body);
   }
 
+  // Find the selected class info to show read-only asset descriptions
+  const selectedClass = classes?.find((c) => c.class_path === classPath);
+
   return (
     <form onSubmit={handleSubmit} className="space-y-8 max-w-2xl">
       {/* Section 1 — Basic Info */}
@@ -131,12 +194,11 @@ export function StrategyEditor({ initial }: Props) {
                   if (cls?.default_subscriptions?.length) {
                     setAssets(
                       cls.default_subscriptions.map((s) => ({
-                        asset_slug: s.asset_slug,
+                        symbol: s.symbol,
                         exchange: s.exchange,
                         timeframe: s.timeframe,
                         market_type: s.market_type as StrategyAsset["market_type"],
                         tick_process: s.tick_process,
-                        description: s.description,
                       }))
                     );
                   }
@@ -201,13 +263,26 @@ export function StrategyEditor({ initial }: Props) {
         </section>
       )}
 
-      {/* Section 3 — Assets */}
+      {/* Section 3 — Initial Paper Balance (paper only) */}
+      {isPaper && (
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Initial Paper Balance
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Set the starting asset quantities for paper trading. E.g. USDT: 10000, BTC: 0.
+          </p>
+          <InitialAssetsEditor value={initialAssets} onChange={setInitialAssets} />
+        </section>
+      )}
+
+      {/* Section 4 — Assets */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Assets</h2>
           <button
             type="button"
-            onClick={() => setAssets((prev) => [...prev, { asset_slug: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0 }])}
+            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0 }])}
             className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
           >
             <Plus className="h-3 w-3" />
@@ -215,78 +290,75 @@ export function StrategyEditor({ initial }: Props) {
           </button>
         </div>
         {assets.length === 0 && <p className="text-sm text-muted-foreground">Add at least one asset.</p>}
-        {assets.map((asset, i) => (
-          <div key={i} className="rounded-md border p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-mono text-muted-foreground">Asset #{i}</span>
-              <button type="button" onClick={() => setAssets((prev) => prev.filter((_, j) => j !== i))}>
-                <Trash2 className="h-4 w-4 text-destructive" />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Asset Slug *</label>
+        {assets.map((asset, i) => {
+          const assetDescription = selectedClass?.default_subscriptions?.[i]?.description;
+          return (
+            <div key={i} className="rounded-md border p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-mono text-muted-foreground">Asset #{i}</span>
+                <button type="button" onClick={() => setAssets((prev) => prev.filter((_, j) => j !== i))}>
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </button>
+              </div>
+              {assetDescription && (
+                <p className="text-xs text-muted-foreground italic border-l-2 border-muted pl-2">{assetDescription}</p>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Symbol *</label>
+                  <input
+                    required
+                    value={asset.symbol}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, symbol: e.target.value } : a))}
+                    placeholder="btcusdt"
+                    className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Exchange</label>
+                  <select
+                    value={asset.exchange}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, exchange: e.target.value } : a))}
+                    className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {EXCHANGES.map((ex) => <option key={ex} value={ex}>{ex}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Timeframe</label>
+                  <select
+                    value={asset.timeframe}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, timeframe: e.target.value } : a))}
+                    className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Market Type</label>
+                  <select
+                    value={asset.market_type}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, market_type: e.target.value as StrategyAsset["market_type"] } : a))}
+                    className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {MARKET_TYPES.map((mt) => <option key={mt} value={mt}>{mt}</option>)}
+                  </select>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
                 <input
-                  required
-                  value={asset.asset_slug}
-                  onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, asset_slug: e.target.value } : a))}
-                  placeholder="btcusdt"
-                  className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  type="checkbox"
+                  checked={asset.tick_process}
+                  onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, tick_process: e.target.checked } : a))}
                 />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Exchange</label>
-                <select
-                  value={asset.exchange}
-                  onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, exchange: e.target.value } : a))}
-                  className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {EXCHANGES.map((ex) => <option key={ex} value={ex}>{ex}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Timeframe</label>
-                <select
-                  value={asset.timeframe}
-                  onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, timeframe: e.target.value } : a))}
-                  className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Market Type</label>
-                <select
-                  value={asset.market_type}
-                  onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, market_type: e.target.value as StrategyAsset["market_type"] } : a))}
-                  className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {MARKET_TYPES.map((mt) => <option key={mt} value={mt}>{mt}</option>)}
-                </select>
-              </div>
+                Tick trigger (receiving this asset&apos;s tick triggers strategy execution)
+              </label>
             </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Description (optional)</label>
-              <input
-                value={asset.description ?? ""}
-                onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, description: e.target.value } : a))}
-                placeholder="e.g. Primary trend asset"
-                className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={asset.tick_process}
-                onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, tick_process: e.target.checked } : a))}
-              />
-              Tick trigger (receiving this asset's tick triggers strategy execution)
-            </label>
-          </div>
-        ))}
+          );
+        })}
       </section>
 
-      {/* Section 4 — Exchange Accounts (live only) */}
+      {/* Section 5 — Exchange Accounts (live only) */}
       {!isPaper && <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Exchange Accounts</h2>

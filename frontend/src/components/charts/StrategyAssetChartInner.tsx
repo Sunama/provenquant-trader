@@ -24,13 +24,13 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
   const oscRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const { data: klines } = useQuery({
-    queryKey: ["klines", asset.asset_slug, asset.timeframe],
-    queryFn: () => marketData.klines({ asset_slug: asset.asset_slug, timeframe: asset.timeframe, limit: 200 }),
+    queryKey: ["klines", asset.symbol, asset.timeframe],
+    queryFn: () => marketData.klines({ symbol: asset.symbol, timeframe: asset.timeframe, limit: 200 }),
   });
 
   const { data: indicatorSeries } = useQuery({
-    queryKey: ["indicators", strategyId, asset.asset_slug, asset.timeframe],
-    queryFn: () => strategies.indicators(strategyId, { asset_slug: asset.asset_slug, timeframe: asset.timeframe }),
+    queryKey: ["indicators", strategyId, asset.symbol, asset.timeframe],
+    queryFn: () => strategies.indicators(strategyId, { symbol: asset.symbol, timeframe: asset.timeframe }),
   });
 
   const oscillators = (indicatorSeries ?? []).filter((s) => s.plot === "oscillator");
@@ -85,7 +85,7 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
     }
 
     // Position entry/exit markers
-    const assetPositions = positions.filter((p) => p.asset_slug === asset.asset_slug);
+    const assetPositions = positions.filter((p) => p.symbol === asset.symbol);
     const markers: SeriesMarker<Time>[] = assetPositions
       .flatMap((p) => {
         const ms: SeriesMarker<Time>[] = [
@@ -113,10 +113,22 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
     candles.setMarkers(markers);
     chart.timeScale().fitContent();
 
-    // Live tick updates
-    wsClient.subscribeTick(asset.asset_slug, asset.timeframe);
-    const unsub = wsClient.subscribe<TickPayload>("tick", (payload) => {
-      if (payload.asset_slug !== asset.asset_slug || payload.timeframe !== asset.timeframe) return;
+    // Closed bar tick → append new candle
+    wsClient.subscribeTick(asset.symbol, asset.timeframe);
+    const unsubTick = wsClient.subscribe<TickPayload>("tick", (payload) => {
+      if (payload.symbol !== asset.symbol || payload.timeframe !== asset.timeframe) return;
+      candles.update({
+        time: toLocal(payload.time),
+        open: payload.open,
+        high: payload.high,
+        low: payload.low,
+        close: payload.close,
+      });
+    });
+
+    // Unclosed bar tick → update last candle in real time
+    const unsubLive = wsClient.subscribe<TickPayload>("live_tick", (payload) => {
+      if (payload.symbol !== asset.symbol || payload.timeframe !== asset.timeframe) return;
       candles.update({
         time: toLocal(payload.time),
         open: payload.open,
@@ -160,13 +172,14 @@ export default function StrategyAssetChartInner({ strategyId, asset, positions }
     observer.observe(mainRef.current);
 
     return () => {
-      unsub();
-      wsClient.unsubscribeTick(asset.asset_slug, asset.timeframe);
+      unsubTick();
+      unsubLive();
+      wsClient.unsubscribeTick(asset.symbol, asset.timeframe);
       observer.disconnect();
       chart.remove();
       oscCharts.forEach((c) => c.remove());
     };
-  }, [klines, indicatorSeries, positions, asset.asset_slug, asset.timeframe, strategyId]);
+  }, [klines, indicatorSeries, positions, asset.symbol, asset.timeframe, strategyId]);
 
   if (!klines) {
     return <div className="h-[300px] w-full flex items-center justify-center text-sm text-muted-foreground">Loading chart…</div>;

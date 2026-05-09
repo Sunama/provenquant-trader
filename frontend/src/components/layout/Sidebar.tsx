@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart2, Bot, LayoutDashboard, Settings } from "lucide-react";
+import { BarChart2, Bot, Eye, LayoutDashboard, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/strategies", label: "Strategies", icon: Bot },
+  { href: "/watched-assets", label: "Watched Assets", icon: Eye },
   { href: "/analytics", label: "Analytics", icon: BarChart2 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

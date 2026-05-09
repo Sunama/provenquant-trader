@@ -69,7 +69,7 @@ class DataCollector(ABC):
                 try:
                     d = json.loads(raw)
                     rows.append({
-                        "asset_slug": d["asset_slug"],
+                        "symbol": d["symbol"],
                         "timeframe": d["timeframe"],
                         "time": _ms_to_dt(d["time"]),
                         "open": d["open"],
@@ -98,7 +98,7 @@ class DataCollector(ABC):
             try:
                 d = json.loads(raw)
                 rows.append({
-                    "asset_slug": d["asset_slug"],
+                    "symbol": d["symbol"],
                     "exchange": d["exchange"],
                     "time": _ms_to_dt(d["time"]),
                     "rate": d["rate"],
@@ -123,7 +123,7 @@ class DataCollector(ABC):
                 try:
                     d = json.loads(raw)
                     rows.append({
-                        "asset_slug": d["asset_slug"],
+                        "symbol": d["symbol"],
                         "exchange": d["exchange"],
                         "market_type": d["market_type"],
                         "time": _ms_to_dt(d["time"]),
@@ -150,7 +150,7 @@ class DataCollector(ABC):
                 try:
                     d = json.loads(raw)
                     rows.append({
-                        "asset_slug": d["asset_slug"],
+                        "symbol": d["symbol"],
                         "exchange": d["exchange"],
                         "time": _ms_to_dt(d["time"]),
                         "oi_contracts": d["oi_contracts"],
@@ -176,7 +176,7 @@ class DataCollector(ABC):
     @staticmethod
     def _parse_liquidation(fields: dict) -> dict:
         return {
-            "asset_slug": fields["asset_slug"],
+            "symbol": fields["symbol"],
             "exchange": fields["exchange"],
             "time": _ms_to_dt(int(fields["time"])),
             "side": fields["side"],
@@ -187,7 +187,7 @@ class DataCollector(ABC):
     @staticmethod
     def _parse_agg_trade(fields: dict) -> dict:
         return {
-            "asset_slug": fields["asset_slug"],
+            "symbol": fields["symbol"],
             "exchange": fields["exchange"],
             "time": _ms_to_dt(int(fields["time"])),
             "price": float(fields["price"]),

@@ -1,10 +1,12 @@
 export interface StrategyAsset {
   asset_num: number;
-  asset_slug: string;
+  symbol: string;
   exchange: string;
   timeframe: string;
   market_type: "spot" | "futures" | "options";
   tick_process: boolean;
+  base_asset?: string;
+  quote_asset?: string;
   description?: string;
 }
 
@@ -23,12 +25,20 @@ export interface ParameterSchema {
   description?: string;
 }
 
+export type SignalAction =
+  | "buy"
+  | "sell"
+  | "open_long"
+  | "close_long"
+  | "open_short"
+  | "close_short";
+
 export interface SignalDefinition {
   name: string;
   asset_num: number;
   exchange_num: number;
   market_type: string;
-  execute: "long" | "short" | "buy" | "sell" | "call" | "put";
+  execute: SignalAction;
   amount: number;
 }
 
@@ -50,7 +60,7 @@ export interface Strategy {
 export interface Position {
   id: number;
   strategy_id: string;
-  asset_slug: string;
+  symbol: string;
   side: string;
   entry_price: number;
   entry_time: string;
@@ -83,7 +93,7 @@ export interface ExchangeAccount {
 }
 
 export interface DefaultSubscription {
-  asset_slug: string;
+  symbol: string;
   exchange: string;
   timeframe: string;
   market_type: "spot" | "futures" | "options";
@@ -100,11 +110,13 @@ export interface StrategyClassInfo {
 
 export interface WatchedAsset {
   id: number;
-  asset_slug: string;
+  symbol: string;
   exchange: string;
   market_type: string;
   enabled: boolean;
   timeframes: string[];
+  base_asset?: string;
+  quote_asset?: string;
 }
 
 export interface Kline {
@@ -128,9 +140,30 @@ export interface IndicatorSeries {
   data: IndicatorPoint[];
 }
 
+export interface TradeHistory {
+  id: string;
+  strategy_id?: string;
+  occurred_at: string;
+  trade_type: string;
+  symbol: string;
+  base_asset: string;
+  quote_asset: string;
+  bought_asset: string;
+  sold_asset: string;
+  bought_qty: number;
+  sold_qty: number;
+  exchange_rate: number;
+  fee: number;
+  fee_asset: string;
+  exchange: string;
+  market_type: string;
+  created_at?: string;
+}
+
 // WebSocket message types
 export type WsMessageType =
   | "tick"
+  | "live_tick"
   | "signal"
   | "execution"
   | "position_update"
@@ -144,7 +177,7 @@ export interface WsMessage<T = Record<string, unknown>> {
 }
 
 export interface TickPayload {
-  asset_slug: string;
+  symbol: string;
   timeframe: string;
   time: number;
   open: number;
@@ -152,6 +185,7 @@ export interface TickPayload {
   low: number;
   close: number;
   volume: number;
+  is_closed?: boolean;
 }
 
 export interface SignalPayload {
@@ -171,7 +205,7 @@ export interface SignalPayload {
 export interface ExecutionPayload {
   action: "open" | "close";
   strategy_id: string;
-  asset_slug: string;
+  symbol: string;
   side: string;
   price: string;
   size: string;

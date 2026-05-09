@@ -12,7 +12,7 @@ class Position(Base):
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
     strategy_id: Mapped[str] = mapped_column(sa.String, nullable=False, index=True)
-    asset_slug: Mapped[str] = mapped_column(sa.String, nullable=False)
+    symbol: Mapped[str] = mapped_column(sa.String, nullable=False)
     side: Mapped[str] = mapped_column(sa.String, nullable=False)  # "long" | "short"
 
     entry_price: Mapped[float] = mapped_column(sa.Float, nullable=False)
@@ -33,4 +33,4 @@ class Position(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Position(id={self.id}, strategy={self.strategy_id}, {self.side} {self.asset_slug})>"
+        return f"<Position(id={self.id}, strategy={self.strategy_id}, {self.side} {self.symbol})>"

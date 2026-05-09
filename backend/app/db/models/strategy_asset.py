@@ -21,14 +21,16 @@ class StrategyAsset(Base):
         nullable=False, index=True,
     )
     asset_num: Mapped[int] = mapped_column(sa.Integer, nullable=False)
-    asset_slug: Mapped[str] = mapped_column(sa.String(50), nullable=False)
+    symbol: Mapped[str] = mapped_column(sa.String(50), nullable=False)
     exchange: Mapped[str] = mapped_column(sa.String(50), nullable=False)
     timeframe: Mapped[str] = mapped_column(sa.String(10), nullable=False)
     market_type: Mapped[str] = mapped_column(sa.String(20), nullable=False)
     tick_process: Mapped[bool] = mapped_column(sa.Boolean, default=False)
     description: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    base_asset: Mapped[Optional[str]] = mapped_column(sa.String(20), nullable=True)
+    quote_asset: Mapped[Optional[str]] = mapped_column(sa.String(20), nullable=True)
 
     strategy: Mapped["StrategyConfig"] = relationship("StrategyConfig", back_populates="assets")
 
     def __repr__(self) -> str:
-        return f"<StrategyAsset(strategy={self.strategy_id}, num={self.asset_num}, slug={self.asset_slug})>"
+        return f"<StrategyAsset(strategy={self.strategy_id}, num={self.asset_num}, symbol={self.symbol})>"

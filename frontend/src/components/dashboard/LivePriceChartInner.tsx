@@ -52,7 +52,7 @@ export default function LivePriceChartInner({ assetSlug, timeframe }: Props) {
 
     // Load historical klines
     marketData
-      .klines({ asset_slug: assetSlug, timeframe, limit: 200 })
+      .klines({ symbol: assetSlug, timeframe, limit: 200 })
       .then((klines) => {
         const data: CandlestickData[] = klines.map((k) => ({
           time: (k.time / 1000) as Time,
@@ -66,10 +66,22 @@ export default function LivePriceChartInner({ assetSlug, timeframe }: Props) {
       })
       .catch(() => {});
 
-    // Subscribe to live ticks
+    // Subscribe to live ticks — both closed and unclosed bar updates
     wsClient.subscribeTick(assetSlug, timeframe);
-    const unsub = wsClient.subscribe<TickPayload>("tick", (payload) => {
-      if (payload.asset_slug !== assetSlug || payload.timeframe !== timeframe) return;
+
+    const unsubTick = wsClient.subscribe<TickPayload>("tick", (payload) => {
+      if (payload.symbol !== assetSlug || payload.timeframe !== timeframe) return;
+      series.update({
+        time: (payload.time / 1000) as Time,
+        open: payload.open,
+        high: payload.high,
+        low: payload.low,
+        close: payload.close,
+      });
+    });
+
+    const unsubLive = wsClient.subscribe<TickPayload>("live_tick", (payload) => {
+      if (payload.symbol !== assetSlug || payload.timeframe !== timeframe) return;
       series.update({
         time: (payload.time / 1000) as Time,
         open: payload.open,
@@ -87,7 +99,8 @@ export default function LivePriceChartInner({ assetSlug, timeframe }: Props) {
     observer.observe(containerRef.current);
 
     return () => {
-      unsub();
+      unsubTick();
+      unsubLive();
       wsClient.unsubscribeTick(assetSlug, timeframe);
       observer.disconnect();
       chart.remove();

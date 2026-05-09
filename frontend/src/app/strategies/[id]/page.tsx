@@ -84,7 +84,7 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
       {strategy.assets.map((asset) => (
         <div key={asset.asset_num} className="rounded-lg border bg-card p-5">
           <div className="flex flex-wrap items-center gap-2 mb-4">
-            <p className="text-sm font-semibold uppercase">{asset.asset_slug}</p>
+            <p className="text-sm font-semibold uppercase">{asset.symbol}</p>
             <span className="text-xs text-muted-foreground">
               {asset.exchange} • {asset.timeframe} • {asset.market_type}
             </span>
@@ -141,7 +141,7 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
             <tbody>
               {positionList.map((pos) => (
                 <tr key={pos.id} className="border-b last:border-0">
-                  <td className="py-2 uppercase font-semibold">{pos.asset_slug}</td>
+                  <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
                   <td className={cn("py-2 font-semibold", pos.side === "long" || pos.side === "buy" ? "text-green-600" : "text-red-500")}>
                     {pos.side.toUpperCase()}
                   </td>

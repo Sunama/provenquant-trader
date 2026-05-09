@@ -33,7 +33,7 @@ class _StrategyEntry:
     is_paper: bool = True
 
     def probe(self) -> StrategyExecuter:
-        return self.cls(params=self.params, assets=self.assets)
+        return self.cls(params=self.params, assets=self.assets, config_id=self.config_id)
 
 
 class StrategyExecuterManager:
@@ -103,11 +103,13 @@ class StrategyExecuterManager:
                 asset_configs = [
                     StrategyAssetConfig(
                         asset_num=a.asset_num,
-                        asset_slug=a.asset_slug,
+                        symbol=a.symbol,
                         exchange=a.exchange,
                         timeframe=a.timeframe,
                         market_type=a.market_type,
                         tick_process=a.tick_process,
+                        base_asset=a.base_asset or "",
+                        quote_asset=a.quote_asset or "",
                     )
                     for a in sorted(config.assets, key=lambda x: x.asset_num)
                 ]
@@ -180,12 +182,11 @@ class StrategyExecuterManager:
     def _dedupe(subs: list[Subscription]) -> list[Subscription]:
         seen: dict[str, Subscription] = {}
         for s in subs:
-            key = f"{s.asset_slug}:{s.timeframe}:{s.market_type}"
+            key = f"{s.symbol}:{s.timeframe}:{s.market_type}"
             seen[key] = s
         return list(seen.values())
 
     def _make_tick_callback(self, exchange: str) -> TickCallback:
-        # exchange arg kept for interface compatibility; dispatch matches on asset_slug+timeframe
         async def _on_tick(tick: TickData) -> None:
             await self._dispatch(tick, exchange)
         return _on_tick
@@ -197,13 +198,12 @@ class StrategyExecuterManager:
         from app.tasks.strategy import run_strategy  # avoid circular import
 
         for strategy_id, entry in self._registry.items():
-            # Find the asset_num of the triggering subscription
             triggered_asset_num: int | None = None
             for asset in entry.assets:
                 if (
                     asset.tick_process
                     and asset.exchange == exchange
-                    and asset.asset_slug == tick.asset_slug
+                    and asset.symbol == tick.symbol
                     and asset.timeframe == tick.timeframe
                 ):
                     triggered_asset_num = asset.asset_num
@@ -220,11 +220,13 @@ class StrategyExecuterManager:
             assets_dicts = [
                 {
                     "asset_num": a.asset_num,
-                    "asset_slug": a.asset_slug,
+                    "symbol": a.symbol,
                     "exchange": a.exchange,
                     "timeframe": a.timeframe,
                     "market_type": a.market_type,
                     "tick_process": a.tick_process,
+                    "base_asset": a.base_asset,
+                    "quote_asset": a.quote_asset,
                 }
                 for a in entry.assets
             ]

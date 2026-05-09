@@ -23,7 +23,7 @@ _PING_INTERVAL = 30
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     r = await aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-    tick_subscriptions: set[str] = set()   # "asset_slug:timeframe" keys
+    tick_subscriptions: set[str] = set()   # "symbol:timeframe" keys
     last_signal_id = "$"
     last_exec_id = "$"
 
@@ -38,15 +38,15 @@ async def websocket_endpoint(ws: WebSocket):
                 payload = msg.get("payload", {})
 
                 if mtype == "subscribe_ticks":
-                    slug = payload.get("asset_slug", "")
+                    symbol = payload.get("symbol", payload.get("asset_slug", ""))
                     tf = payload.get("timeframe", "")
-                    if slug and tf:
-                        tick_subscriptions.add(f"{slug}:{tf}")
+                    if symbol and tf:
+                        tick_subscriptions.add(f"{symbol}:{tf}")
 
                 elif mtype == "unsubscribe_ticks":
-                    slug = payload.get("asset_slug", "")
+                    symbol = payload.get("symbol", payload.get("asset_slug", ""))
                     tf = payload.get("timeframe", "")
-                    tick_subscriptions.discard(f"{slug}:{tf}")
+                    tick_subscriptions.discard(f"{symbol}:{tf}")
 
                 elif mtype == "ping":
                     await ws.send_text(json.dumps({"type": "pong", "ts": int(time.time()), "payload": {}}))
@@ -81,7 +81,11 @@ async def websocket_endpoint(ws: WebSocket):
                 await asyncio.sleep(1)
 
     async def stream_ticks():
-        """Forward tick pub/sub messages for subscribed assets."""
+        """
+        Forward tick pub/sub messages for subscribed assets.
+        Closed bars → type "tick"
+        Live (unclosed) bars → type "live_tick"
+        """
         pubsub = r.pubsub()
         await pubsub.subscribe("ticks:broadcast")
         try:
@@ -90,9 +94,16 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 try:
                     data = json.loads(message["data"])
-                    key = f"{data.get('asset_slug','')}:{data.get('timeframe','')}"
+                    symbol = data.get("symbol", data.get("asset_slug", ""))
+                    key = f"{symbol}:{data.get('timeframe','')}"
                     if key in tick_subscriptions:
-                        await ws.send_text(json.dumps({"type": "tick", "ts": int(time.time()), "payload": data}))
+                        is_closed = data.get("is_closed", True)
+                        msg_type = "tick" if is_closed else "live_tick"
+                        await ws.send_text(json.dumps({
+                            "type": msg_type,
+                            "ts": int(time.time()),
+                            "payload": data,
+                        }))
                 except Exception:
                     pass
         except asyncio.CancelledError:

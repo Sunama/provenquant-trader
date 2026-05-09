@@ -10,7 +10,7 @@ class WebSocketClient {
   private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
   private subscribers = new Map<WsMessageType, Set<Handler>>();
-  private tickSubscriptions = new Set<string>();   // "slug:timeframe"
+  private tickSubscriptions = new Set<string>();   // "symbol:timeframe"
   private shouldReconnect = true;
 
   connect(url: string) {
@@ -33,17 +33,17 @@ class WebSocketClient {
     return () => this.subscribers.get(type)?.delete(handler as Handler);
   }
 
-  subscribeTick(assetSlug: string, timeframe: string) {
-    const key = `${assetSlug}:${timeframe}`;
+  subscribeTick(symbol: string, timeframe: string) {
+    const key = `${symbol}:${timeframe}`;
     if (this.tickSubscriptions.has(key)) return;
     this.tickSubscriptions.add(key);
-    this._send({ type: "subscribe_ticks", payload: { asset_slug: assetSlug, timeframe } });
+    this._send({ type: "subscribe_ticks", payload: { symbol, timeframe } });
   }
 
-  unsubscribeTick(assetSlug: string, timeframe: string) {
-    const key = `${assetSlug}:${timeframe}`;
+  unsubscribeTick(symbol: string, timeframe: string) {
+    const key = `${symbol}:${timeframe}`;
     this.tickSubscriptions.delete(key);
-    this._send({ type: "unsubscribe_ticks", payload: { asset_slug: assetSlug, timeframe } });
+    this._send({ type: "unsubscribe_ticks", payload: { symbol, timeframe } });
   }
 
   ping() {
@@ -62,8 +62,8 @@ class WebSocketClient {
       this.reconnectDelay = 1000;
       // Re-subscribe ticks on reconnect
       for (const key of this.tickSubscriptions) {
-        const [asset_slug, timeframe] = key.split(":");
-        this._send({ type: "subscribe_ticks", payload: { asset_slug, timeframe } });
+        const [symbol, timeframe] = key.split(":");
+        this._send({ type: "subscribe_ticks", payload: { symbol, timeframe } });
       }
     };
 

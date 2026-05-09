@@ -12,15 +12,15 @@ async def get_balance():
     return {"balance": balance}
 
 
-@router.get("/position/{asset_slug}")
-async def get_position(asset_slug: str):
+@router.get("/position/{symbol}")
+async def get_position(symbol: str):
     adapter = PaperTradeAdapter()
-    pos = await adapter.get_open_position(asset_slug)
+    pos = await adapter.get_open_position(symbol)
     if not pos:
         return {"open": False}
     return {
         "open": True,
-        "asset_slug": pos.asset_slug,
+        "symbol": pos.symbol,
         "side": pos.side,
         "size": pos.size,
         "entry_price": pos.entry_price,

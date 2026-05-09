@@ -77,10 +77,10 @@ export default function DashboardPage() {
       {chartAsset && (
         <div className="rounded-lg border bg-card p-5">
           <p className="mb-3 text-sm font-semibold">
-            {chartAsset.asset_slug.toUpperCase()} — {chartAsset.timeframe}
+            {chartAsset.symbol.toUpperCase()} — {chartAsset.timeframe}
             <span className="ml-2 text-xs font-normal text-muted-foreground">({chartAsset.exchange})</span>
           </p>
-          <LivePriceChart assetSlug={chartAsset.asset_slug} timeframe={chartAsset.timeframe} />
+          <LivePriceChart assetSlug={chartAsset.symbol} timeframe={chartAsset.timeframe} />
         </div>
       )}
 
@@ -102,7 +102,7 @@ export default function DashboardPage() {
             <tbody>
               {openPositions.map((pos) => (
                 <tr key={pos.id} className="border-b last:border-0">
-                  <td className="py-2 font-semibold uppercase">{pos.asset_slug}</td>
+                  <td className="py-2 font-semibold uppercase">{pos.symbol}</td>
                   <td className={`py-2 font-semibold ${pos.side === "long" || pos.side === "buy" ? "text-green-600" : "text-red-500"}`}>
                     {pos.side.toUpperCase()}
                   </td>

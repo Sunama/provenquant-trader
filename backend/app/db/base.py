@@ -12,6 +12,7 @@ from app.db.models.open_interest import OpenInterest
 from app.db.models.liquidation import Liquidation
 from app.db.models.agg_trade import AggTrade
 from app.db.models.app_setting import AppSetting
+from app.db.models.trade_history import TradeHistory
 
 __all__ = [
     "Base",
@@ -19,5 +20,5 @@ __all__ = [
     "ExchangeAccount", "WatchedAsset",
     "Position", "Tick",
     "FundingRate", "MarkPrice", "OpenInterest", "Liquidation", "AggTrade",
-    "AppSetting",
+    "AppSetting", "TradeHistory",
 ]

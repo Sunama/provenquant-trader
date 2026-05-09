@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Subscription:
-    asset_slug: str
+    symbol: str
     timeframe: str
     exchange: str = "binance"
     market_type: str = "futures"
@@ -26,7 +26,7 @@ class Subscription:
 
 @dataclass
 class TickData:
-    asset_slug: str
+    symbol: str
     timeframe: str
     time: int           # Unix ms
     open: float
@@ -34,13 +34,14 @@ class TickData:
     low: float
     close: float
     volume: float
+    is_closed: bool = True  # False = live update for the currently forming bar
 
     def redis_key(self) -> str:
-        return f"tick:{self.asset_slug}:{self.timeframe}"
+        return f"tick:{self.symbol}:{self.timeframe}"
 
     def to_dict(self) -> dict:
         return {
-            "asset_slug": self.asset_slug,
+            "symbol": self.symbol,
             "timeframe": self.timeframe,
             "time": self.time,
             "open": self.open,
@@ -48,23 +49,24 @@ class TickData:
             "low": self.low,
             "close": self.close,
             "volume": self.volume,
+            "is_closed": self.is_closed,
         }
 
 
 @dataclass
 class FundingRateData:
-    asset_slug: str
+    symbol: str
     exchange: str
     time: int           # Unix ms
     rate: float
     next_funding_time: Optional[int] = None
 
     def redis_key(self) -> str:
-        return f"funding:{self.asset_slug}:{self.exchange}"
+        return f"funding:{self.symbol}:{self.exchange}"
 
     def to_dict(self) -> dict:
         return {
-            "asset_slug": self.asset_slug,
+            "symbol": self.symbol,
             "exchange": self.exchange,
             "time": self.time,
             "rate": self.rate,
@@ -73,7 +75,7 @@ class FundingRateData:
 
 @dataclass
 class MarkPriceData:
-    asset_slug: str
+    symbol: str
     exchange: str
     market_type: str
     time: int           # Unix ms
@@ -81,11 +83,11 @@ class MarkPriceData:
     index_price: Optional[float] = None
 
     def redis_key(self) -> str:
-        return f"mark_price:{self.asset_slug}:{self.exchange}:{self.market_type}"
+        return f"mark_price:{self.symbol}:{self.exchange}:{self.market_type}"
 
     def to_dict(self) -> dict:
         return {
-            "asset_slug": self.asset_slug,
+            "symbol": self.symbol,
             "exchange": self.exchange,
             "market_type": self.market_type,
             "time": self.time,
@@ -96,18 +98,18 @@ class MarkPriceData:
 
 @dataclass
 class OpenInterestData:
-    asset_slug: str
+    symbol: str
     exchange: str
     time: int           # Unix ms
     oi_contracts: float
     oi_value: Optional[float] = None
 
     def redis_key(self) -> str:
-        return f"oi:{self.asset_slug}:{self.exchange}"
+        return f"oi:{self.symbol}:{self.exchange}"
 
     def to_dict(self) -> dict:
         return {
-            "asset_slug": self.asset_slug,
+            "symbol": self.symbol,
             "exchange": self.exchange,
             "time": self.time,
             "oi_contracts": self.oi_contracts,
@@ -117,7 +119,7 @@ class OpenInterestData:
 
 @dataclass
 class LiquidationData:
-    asset_slug: str
+    symbol: str
     exchange: str
     time: int           # Unix ms
     side: str           # "long_liq"|"short_liq"
@@ -126,7 +128,7 @@ class LiquidationData:
 
     def to_dict(self) -> dict:
         return {
-            "asset_slug": self.asset_slug,
+            "symbol": self.symbol,
             "exchange": self.exchange,
             "time": self.time,
             "side": self.side,
@@ -137,7 +139,7 @@ class LiquidationData:
 
 @dataclass
 class AggTradeData:
-    asset_slug: str
+    symbol: str
     exchange: str
     time: int           # Unix ms
     price: float
@@ -146,7 +148,7 @@ class AggTradeData:
 
     def to_dict(self) -> dict:
         return {
-            "asset_slug": self.asset_slug,
+            "symbol": self.symbol,
             "exchange": self.exchange,
             "time": self.time,
             "price": self.price,
@@ -157,14 +159,14 @@ class AggTradeData:
 
 @dataclass
 class OrderBookData:
-    asset_slug: str
+    symbol: str
     exchange: str
     time: int           # Unix ms
     bids: list          # [[price, qty], ...]
     asks: list          # [[price, qty], ...]
 
     def redis_key(self) -> str:
-        return f"orderbook:{self.asset_slug}:{self.exchange}"
+        return f"orderbook:{self.symbol}:{self.exchange}"
 
 
 TickCallback = Callable[[TickData], Awaitable[None]]
@@ -182,9 +184,9 @@ class DataFetcher(ABC):
     Subclasses implement _connect() / _disconnect() / _subscribe_symbols() /
     _unsubscribe_symbols() using exchange-specific WebSocket libraries.
 
-    On each closed bar the subclass calls self._emit(tick) which:
-      1. Stores the tick in Redis (LPUSH, capped list) and publishes to ticks:broadcast
-      2. Invokes all registered on_tick callbacks
+    On each bar the subclass calls self._emit(tick):
+      - Closed bars (tick.is_closed=True): stored in Redis list + published to ticks:broadcast
+      - Live bars (tick.is_closed=False): published to ticks:broadcast only (no persistence)
     """
 
     REDIS_TICK_MAXLEN = 1440            # keep 1 day of 1m bars in Redis
@@ -224,7 +226,7 @@ class DataFetcher(ABC):
 
     def set_subscriptions(self, subscriptions: list[Subscription]) -> None:
         """Replace the full subscription set (called by StrategyExecuterManager)."""
-        new = {f"{s.asset_slug}:{s.timeframe}:{s.market_type}": s for s in subscriptions}
+        new = {f"{s.symbol}:{s.timeframe}:{s.market_type}": s for s in subscriptions}
         added = set(new) - set(self._subscriptions)
         removed = set(self._subscriptions) - set(new)
 
@@ -236,7 +238,7 @@ class DataFetcher(ABC):
                     self._subscribe_symbols([new[k] for k in added])
                 )
             if removed:
-                old_subs = {f"{s.asset_slug}:{s.timeframe}:{s.market_type}": s
+                old_subs = {f"{s.symbol}:{s.timeframe}:{s.market_type}": s
                             for s in self._subscriptions.values()}
                 asyncio.create_task(
                     self._unsubscribe_symbols([old_subs[k] for k in removed if k in old_subs])
@@ -261,18 +263,22 @@ class DataFetcher(ABC):
 
     async def _emit(self, tick: TickData) -> None:
         if self._redis:
-            key = tick.redis_key()
             payload = json.dumps(tick.to_dict())
-            await self._redis.lpush(key, payload)
-            await self._redis.ltrim(key, 0, self.REDIS_TICK_MAXLEN - 1)
-            # Publish for WebSocket relay (zero-latency, fire-and-forget)
+            if tick.is_closed:
+                # Persist to Redis list for history + strategy execution
+                key = tick.redis_key()
+                await self._redis.lpush(key, payload)
+                await self._redis.ltrim(key, 0, self.REDIS_TICK_MAXLEN - 1)
+            # Always broadcast for WebSocket relay (is_closed flag included in payload)
             await self._redis.publish("ticks:broadcast", payload)
 
-        for cb in self._tick_callbacks:
-            try:
-                await cb(tick)
-            except Exception:
-                logger.exception("Tick callback raised")
+        # Only invoke strategy callbacks for closed bars
+        if tick.is_closed:
+            for cb in self._tick_callbacks:
+                try:
+                    await cb(tick)
+                except Exception:
+                    logger.exception("Tick callback raised")
 
     async def _emit_funding_rate(self, data: FundingRateData) -> None:
         if self._redis:
@@ -311,7 +317,6 @@ class DataFetcher(ABC):
 
     async def _emit_liquidation(self, data: LiquidationData) -> None:
         if self._redis:
-            # Use Redis Stream for liquidations (high-volume, need ack)
             await self._redis.xadd("liquidations:buffer", data.to_dict(), maxlen=50000)
 
         for cb in self._liquidation_callbacks:
