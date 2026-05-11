@@ -58,7 +58,7 @@ async def test_handle_kline_closed_bar_emits_tick(mock_redis):
     assert len(received) == 1
     tick = received[0]
     assert isinstance(tick, TickData)
-    assert tick.asset_slug == "btcusdt"
+    assert tick.symbol == "btcusdt"
     assert tick.close == pytest.approx(50_000.0)
     assert tick.timeframe == "1m"
 
@@ -78,7 +78,7 @@ async def test_handle_kline_symbol_is_lowercased(mock_redis):
     received = []
     f.add_callback(AsyncMock(side_effect=lambda t: received.append(t)))
     await f._handle_kline(_kline_msg("ETHUSDT", "5m", 3_000.0, is_closed=True))
-    assert received[0].asset_slug == "ethusdt"
+    assert received[0].symbol == "ethusdt"
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_handle_mark_price_emits_mark_price(mock_redis):
     assert isinstance(mp, MarkPriceData)
     assert mp.price == pytest.approx(50_000.0)
     assert mp.index_price == pytest.approx(49_900.0)
-    assert mp.asset_slug == "btcusdt"
+    assert mp.symbol == "btcusdt"
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_handle_agg_trade_emits_correct_fields(mock_redis):
     assert trade.price == pytest.approx(50_000.0)
     assert trade.quantity == pytest.approx(0.01)
     assert trade.is_buyer_maker is False
-    assert trade.asset_slug == "btcusdt"
+    assert trade.symbol == "btcusdt"
 
 
 @pytest.mark.asyncio

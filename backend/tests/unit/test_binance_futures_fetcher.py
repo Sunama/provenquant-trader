@@ -77,8 +77,10 @@ def test_futures_all_streams_url_contains_agg_trade():
 
 
 def test_futures_all_streams_url_contains_depth():
+    _sub_depth = Subscription("btcusdt", "1m", "binance", "futures", subscribe_depth=True)
+    _key_depth = "btcusdt:1m:futures"
     f = BinanceFuturesDataFetcher()
-    f._subscriptions = {_KEY: _SUB}
+    f._subscriptions = {_key_depth: _sub_depth}
     url = f._all_streams_url()
     assert "btcusdt@depth20@100ms" in url
 

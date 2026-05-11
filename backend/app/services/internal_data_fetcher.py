@@ -19,12 +19,8 @@ logger = logging.getLogger(__name__)
 
 class InternalDataFetcher:
     """
-    Provides historical market data from Postgres for use inside StrategyExecuter.execute().
-    Strategies can instantiate this directly; it uses async SQLAlchemy sessions.
-
-    Example usage inside a strategy:
-        fetcher = InternalDataFetcher()
-        klines = await fetcher.get_klines("btcusdt", "1h", limit=200)
+    Provides historical market data from Postgres for use inside strategy execute().
+    Strategies should use context.db instead of instantiating this directly.
     """
 
     async def get_klines(
@@ -32,6 +28,7 @@ class InternalDataFetcher:
         symbol: str,
         timeframe: str,
         exchange: str = "binance",
+        market_type: str = "futures",
         limit: int = 200,
         before: Optional[datetime] = None,
     ) -> list[Tick]:
@@ -41,6 +38,7 @@ class InternalDataFetcher:
                 .where(
                     Tick.symbol == symbol,
                     Tick.timeframe == timeframe,
+                    Tick.market_type == market_type,
                 )
                 .order_by(desc(Tick.time))
                 .limit(limit)
@@ -55,12 +53,17 @@ class InternalDataFetcher:
         self,
         symbol: str,
         exchange: str = "binance",
+        market_type: str = "futures",
         limit: int = 50,
     ) -> list[FundingRate]:
         async with SessionLocal() as session:
             result = await session.execute(
                 select(FundingRate)
-                .where(FundingRate.symbol == symbol, FundingRate.exchange == exchange)
+                .where(
+                    FundingRate.symbol == symbol,
+                    FundingRate.exchange == exchange,
+                    FundingRate.market_type == market_type,
+                )
                 .order_by(desc(FundingRate.time))
                 .limit(limit)
             )
@@ -92,12 +95,17 @@ class InternalDataFetcher:
         self,
         symbol: str,
         exchange: str = "binance",
+        market_type: str = "futures",
         limit: int = 50,
     ) -> list[OpenInterest]:
         async with SessionLocal() as session:
             result = await session.execute(
                 select(OpenInterest)
-                .where(OpenInterest.symbol == symbol, OpenInterest.exchange == exchange)
+                .where(
+                    OpenInterest.symbol == symbol,
+                    OpenInterest.exchange == exchange,
+                    OpenInterest.market_type == market_type,
+                )
                 .order_by(desc(OpenInterest.time))
                 .limit(limit)
             )
@@ -108,6 +116,7 @@ class InternalDataFetcher:
         self,
         symbol: str,
         exchange: str = "binance",
+        market_type: str = "futures",
     ) -> Optional[OrderBookData]:
         """Returns latest order book snapshot from Redis (not persisted to Postgres)."""
         import redis.asyncio as aioredis
@@ -115,7 +124,7 @@ class InternalDataFetcher:
 
         r = await aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         try:
-            key = f"orderbook:{symbol}:{exchange}"
+            key = f"orderbook:{symbol}:{exchange}:{market_type}"
             raw = await r.get(key)
             if not raw:
                 return None
@@ -126,6 +135,7 @@ class InternalDataFetcher:
                 time=data.get("time", 0),
                 bids=data.get("bids", []),
                 asks=data.get("asks", []),
+                market_type=market_type,
             )
         finally:
             await r.aclose()

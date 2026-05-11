@@ -1,237 +1,294 @@
 """
-Integration tests for run_strategy Celery task logic.
-Tests the async inner function directly (bypasses Celery broker).
-Requires Redis for signal publishing.
+Integration tests for the run_strategy Celery task (sync wrapper).
+These tests execute the task logic directly (without a Celery broker) so they are
+fast and require only a Redis connection if decorated with @needs_redis.
+Redis-free tests use patched aioredis to verify publish logic.
 """
 import json
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.data_fetcher import TickData
-from app.services.strategy_executer import SignalSide, TradeSignal
-from app.tasks.strategy import _call_execute, _publish_signals
-from strategies.example_rsi import RSIStrategy
-from tests.integration.conftest import needs_redis
+from app.services.strategy_executer import (
+    ExecutionPlan, LegOrder, PriceMethod, SignalAction, AmountMode, StrategyLeg, StrategyExecuter,
+)
+from app.services.strategy_context import StrategyContext
+from app.tasks.strategy import _publish_plan
 
 
-def _tick(close: float = 50_000.0) -> TickData:
+# ── Helpers ───────────────────────────────────────────────────────────
+
+def _make_tick(close: float = 60_000.0) -> TickData:
     return TickData(
-        asset_slug="btcusdt", timeframe="30m",
+        symbol="btcusdt",
+        timeframe="30m",
         time=1_700_000_000_000,
-        open=close, high=close, low=close, close=close, volume=100.0,
+        open=close, high=close * 1.001, low=close * 0.999,
+        close=close, volume=100.0,
+        market_type="futures",
     )
 
 
-# ── _call_execute() — compatibility shim ─────────────────────────────
+def _make_leg(leg_num: int = 0, symbol: str = "btcusdt") -> StrategyLeg:
+    return StrategyLeg(
+        leg_num=leg_num,
+        role="primary",
+        symbol=symbol,
+        exchange="binance",
+        market_type="futures",
+        timeframe="30m",
+        tick_process=(leg_num == 0),
+        subscribe_depth=False,
+        base_asset="BTC",
+        quote_asset="USDT",
+        exchange_account_num=0,
+    )
+
+
+def _make_context(close: float = 60_000.0, leg_num: int = 0) -> StrategyContext:
+    return StrategyContext(
+        tick=_make_tick(close),
+        leg_num=leg_num,
+        legs=[_make_leg()],
+        config_id="cfg-test",
+    )
+
+
+def _make_order(action: SignalAction = SignalAction.OPEN_LONG) -> LegOrder:
+    return LegOrder(
+        leg_num=0,
+        action=action,
+        amount=0.5,
+        amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+        price_method=PriceMethod.MARKET,
+    )
+
+
+# ── _publish_plan ─────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_call_execute_modern_strategy_returns_list():
-    strategy = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
-    for price in [100.0, 99.0, 98.0, 97.0, 96.0, 95.0]:
-        strategy._closes.append(price)
-    tick = _tick(94.0)
-    signals = await _call_execute(strategy, tick, asset_num=0)
-    assert isinstance(signals, list)
-    assert len(signals) == 1
-    assert signals[0].execute == SignalSide.LONG
-
-
-@pytest.mark.asyncio
-async def test_call_execute_no_signal_returns_empty_list():
-    strategy = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
-    tick = _tick(50_000.0)
-    signals = await _call_execute(strategy, tick, asset_num=0)
-    assert signals == []
-
-
-@pytest.mark.asyncio
-async def test_call_execute_legacy_strategy_wraps_signal():
-    """Old-style strategies returning a single TradeSignal are wrapped into a list."""
-    from app.services.strategy_executer import StrategyExecuter
-    from app.services.data_fetcher import Subscription
-
-    class _OldStyleSignal:
-        """Simulates the old TradeSignal with .side, .size_pct, .price etc."""
-        side = "long"
-        size_pct = 0.5
-        tp_pct = 0.02
-        sl_pct = 0.01
-        price = 50_000.0
-        asset_slug = "btcusdt"
-        timeframe = "30m"
-
-    class _LegacyStrat(StrategyExecuter):
-        @property
-        def id(self): return "legacy"
-        @property
-        def parameter_schema(self): return []
-        @property
-        def subscriptions(self): return [Subscription("btcusdt", "1m")]
-        async def execute(self, tick):  # type: ignore[override]
-            return _OldStyleSignal()
-
-    strategy = _LegacyStrat()
-    signals = await _call_execute(strategy, _tick(), asset_num=0)
-    assert isinstance(signals, list)
-    assert len(signals) == 1
-    assert signals[0].execute == SignalSide.LONG
-    assert signals[0].asset_num == 0
-    assert signals[0].amount == 0.5
+async def test_publish_plan_writes_to_trade_stream():
+    """_publish_plan adds one message to the signals:trade stream."""
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1700000000000-0")
+    ctx = _make_context()
+    plan = ExecutionPlan(orders=[_make_order()])
+    await _publish_plan(r, plan, "cfg-1", ctx)
+    calls = r.xadd.call_args_list
+    stream_keys = [c.args[0] for c in calls]
+    assert "signals:trade" in stream_keys
 
 
 @pytest.mark.asyncio
-async def test_call_execute_legacy_returns_none_wraps_to_empty():
-    from app.services.strategy_executer import StrategyExecuter
-    from app.services.data_fetcher import Subscription
-
-    class _LegacyNoSignal(StrategyExecuter):
-        @property
-        def id(self): return "legacy_none"
-        @property
-        def parameter_schema(self): return []
-        @property
-        def subscriptions(self): return [Subscription("btcusdt", "1m")]
-        async def execute(self, tick):  # type: ignore[override]
-            return None
-
-    strategy = _LegacyNoSignal()
-    signals = await _call_execute(strategy, _tick(), asset_num=0)
-    assert signals == []
+async def test_publish_plan_writes_to_broadcast_stream():
+    """_publish_plan also writes to the signals:broadcast stream."""
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1700000000000-0")
+    ctx = _make_context()
+    plan = ExecutionPlan(orders=[_make_order()])
+    await _publish_plan(r, plan, "cfg-1", ctx)
+    calls = r.xadd.call_args_list
+    stream_keys = [c.args[0] for c in calls]
+    assert "signals:broadcast" in stream_keys
 
 
-# ── _publish_signals() ────────────────────────────────────────────────
-
-@needs_redis
 @pytest.mark.asyncio
-async def test_publish_signals_writes_to_both_streams(redis_client):
-    signals = [
-        TradeSignal(execute=SignalSide.LONG, asset_num=0, exchange_num=0,
-                    market_type="futures", amount=0.5, tp_pct=0.02, sl_pct=0.01, price=50_000.0)
-    ]
-    tick = _tick(50_000.0)
-    await _publish_signals(redis_client, signals, "rsi_btcusdt_30m", "cfg-001", tick)
+async def test_publish_plan_fields_contain_orders_json():
+    """The 'orders' field in the stream message is a valid JSON list of LegOrder dicts."""
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1-0")
+    ctx = _make_context()
+    order = _make_order(action=SignalAction.OPEN_SHORT)
+    plan = ExecutionPlan(orders=[order])
+    await _publish_plan(r, plan, "cfg-1", ctx)
 
-    trade_msgs = await redis_client.xrange("signals:trade", "-", "+")
-    broadcast_msgs = await redis_client.xrange("signals:broadcast", "-", "+")
-    assert len(trade_msgs) == 1
-    assert len(broadcast_msgs) == 1
+    # Grab the first call (signals:trade)
+    fields = r.xadd.call_args_list[0].args[1]
+    orders_list = json.loads(fields["orders"])
+    assert len(orders_list) == 1
+    assert orders_list[0]["action"] == SignalAction.OPEN_SHORT.value
 
 
-@needs_redis
 @pytest.mark.asyncio
-async def test_publish_signals_fields_are_correct(redis_client):
-    signals = [
-        TradeSignal(execute=SignalSide.SHORT, asset_num=1, exchange_num=0,
-                    market_type="futures", amount=0.3, tp_pct=0.05, sl_pct=0.02, price=60_000.0)
-    ]
-    tick = _tick(60_000.0)
-    await _publish_signals(redis_client, signals, "my_strat", "cfg-999", tick)
-
-    msgs = await redis_client.xrange("signals:trade", "-", "+")
-    fields = msgs[0][1]
-    assert fields["strategy_id"] == "my_strat"
-    assert fields["config_id"] == "cfg-999"
-    assert fields["execute"] == "short"
-    assert fields["asset_num"] == "1"
-    assert fields["amount"] == "0.3"
-    assert fields["tp_pct"] == "0.05"
-    assert fields["sl_pct"] == "0.02"
-    assert fields["price"] == "60000.0"
-    assert "ts" in fields
+async def test_publish_plan_fields_contain_config_id():
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1-0")
+    ctx = _make_context()
+    plan = ExecutionPlan(orders=[_make_order()])
+    await _publish_plan(r, plan, "cfg-42", ctx)
+    fields = r.xadd.call_args_list[0].args[1]
+    assert fields["config_id"] == "cfg-42"
 
 
-@needs_redis
 @pytest.mark.asyncio
-async def test_publish_signals_empty_tp_sl_stored_as_empty_string(redis_client):
-    signals = [
-        TradeSignal(execute=SignalSide.LONG, asset_num=0, exchange_num=0,
-                    market_type="spot", amount=1.0, tp_pct=None, sl_pct=None, price=3_000.0)
-    ]
-    tick = _tick(3_000.0)
-    await _publish_signals(redis_client, signals, "strat", "cfg", tick)
-    msgs = await redis_client.xrange("signals:trade", "-", "+")
-    fields = msgs[0][1]
-    assert fields["tp_pct"] == ""
-    assert fields["sl_pct"] == ""
+async def test_publish_plan_fields_contain_tick_info():
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1-0")
+    ctx = _make_context(close=55_000.0)
+    plan = ExecutionPlan(orders=[_make_order()])
+    await _publish_plan(r, plan, "cfg-1", ctx)
+    fields = r.xadd.call_args_list[0].args[1]
+    assert float(fields["tick_close"]) == pytest.approx(55_000.0)
+    assert fields["tick_symbol"] == "btcusdt"
 
 
-@needs_redis
 @pytest.mark.asyncio
-async def test_publish_signals_multi_leg_publishes_each_signal(redis_client):
-    signals = [
-        TradeSignal(execute=SignalSide.LONG, asset_num=0, exchange_num=0,
-                    market_type="futures", amount=0.3, price=60_000.0),
-        TradeSignal(execute=SignalSide.SHORT, asset_num=1, exchange_num=0,
-                    market_type="futures", amount=0.3, price=3_000.0),
-    ]
-    tick = _tick(60_000.0)
-    await _publish_signals(redis_client, signals, "pair_strat", "cfg-pair", tick)
-    msgs = await redis_client.xrange("signals:trade", "-", "+")
-    assert len(msgs) == 2
+async def test_publish_plan_multi_leg_orders_serialized():
+    """Multiple LegOrders are all present in the JSON."""
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1-0")
+    ctx = _make_context()
+    plan = ExecutionPlan(orders=[
+        _make_order(action=SignalAction.OPEN_LONG),
+        LegOrder(leg_num=1, action=SignalAction.OPEN_SHORT, amount=0.3),
+    ])
+    await _publish_plan(r, plan, "cfg-1", ctx)
+    fields = r.xadd.call_args_list[0].args[1]
+    orders_list = json.loads(fields["orders"])
+    assert len(orders_list) == 2
+    actions = {o["action"] for o in orders_list}
+    assert SignalAction.OPEN_LONG.value in actions
+    assert SignalAction.OPEN_SHORT.value in actions
 
 
-# ── Full run_strategy flow (mocked Celery + Redis) ────────────────────
+@pytest.mark.asyncio
+async def test_publish_plan_empty_on_complete_when_none():
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1-0")
+    ctx = _make_context()
+    plan = ExecutionPlan(orders=[_make_order()], on_complete=None)
+    await _publish_plan(r, plan, "cfg-1", ctx)
+    fields = r.xadd.call_args_list[0].args[1]
+    assert fields["on_complete"] == ""
 
-def test_run_strategy_dynamic_import_and_signal_publish():
-    """
-    Verify the full inner async flow:
-    1. Import strategy class dynamically
-    2. Execute to get signals
-    3. Publish to Redis stream (mocked)
-    run_strategy is a sync Celery task (uses asyncio.run() internally),
-    so this test must be sync too — asyncio.run() can't be nested.
-    """
+
+@pytest.mark.asyncio
+async def test_publish_plan_on_complete_forwarded():
+    r = AsyncMock()
+    r.xadd = AsyncMock(return_value="1-0")
+    ctx = _make_context()
+    plan = ExecutionPlan(orders=[_make_order()], on_complete="settle_transfer")
+    await _publish_plan(r, plan, "cfg-1", ctx)
+    fields = r.xadd.call_args_list[0].args[1]
+    assert fields["on_complete"] == "settle_transfer"
+
+
+# ── Module-level stub strategies (needed so importlib.import_module can find them) ──
+
+class _NoSignalStrategy(StrategyExecuter):
+    @property
+    def id(self): return "no-signal"
+    @property
+    def subscriptions(self): return []
+    @property
+    def parameter_schema(self): return []
+    async def execute(self, context): return None
+
+
+class _SignalStrategy(StrategyExecuter):
+    @property
+    def id(self): return "signal"
+    @property
+    def subscriptions(self): return []
+    @property
+    def parameter_schema(self): return []
+    async def execute(self, context):
+        return ExecutionPlan(orders=[_make_order()])
+
+
+class _FailStrategy(StrategyExecuter):
+    @property
+    def id(self): return "fail"
+    @property
+    def subscriptions(self): return []
+    @property
+    def parameter_schema(self): return []
+    async def execute(self, context):
+        raise RuntimeError("Something broke")
+
+
+# ── run_strategy task ─────────────────────────────────────────────────
+
+def test_run_strategy_task_no_signal_returns_string():
+    """Strategy that returns None → task returns 'No signal'."""
+    from app.tasks.strategy import run_strategy
+
+    ctx = _make_context()
+    class_path = f"{_NoSignalStrategy.__module__}.{_NoSignalStrategy.__qualname__}"
+
     mock_redis = AsyncMock()
     mock_redis.delete = AsyncMock()
-    mock_redis.aclose = AsyncMock()
     mock_redis.xadd = AsyncMock(return_value="1-0")
-
-    # Pre-fill closes so RSI fires a signal
-    with patch("redis.asyncio.from_url", AsyncMock(return_value=mock_redis)):
-        from app.tasks.strategy import run_strategy
-
-        tick_dict = {
-            "asset_slug": "btcusdt",
-            "timeframe": "30m",
-            "time": 1_700_000_000_000,
-            "open": 94.0,
-            "high": 94.5,
-            "low": 93.5,
-            "close": 94.0,
-            "volume": 100.0,
-        }
-
-        # Can't easily prefill _closes via task, so test with insufficient data → "No signal"
-        result = run_strategy(
-            strategy_id="rsi_btcusdt_30m",
-            strategy_class_path="strategies.example_rsi.RSIStrategy",
-            tick_dict=tick_dict,
-            params={"period": 14, "oversold": 30.0, "overbought": 70.0, "amount": 0.5},
-            assets_dicts=[],
-            asset_num=0,
-            config_id="cfg-001",
-        )
-
-    assert "signal" in result.lower() or "no" in result.lower()
-    mock_redis.delete.assert_called()  # lock released
-
-
-def test_run_strategy_releases_lock_on_exception():
-    """Redis lock must be released even if strategy raises an exception."""
-    mock_redis = AsyncMock()
-    mock_redis.delete = AsyncMock()
     mock_redis.aclose = AsyncMock()
 
-    with patch("redis.asyncio.from_url", AsyncMock(return_value=mock_redis)):
-        from app.tasks.strategy import run_strategy
-        with pytest.raises(Exception):
-            run_strategy(
-                strategy_id="bad_strategy",
-                strategy_class_path="strategies.nonexistent.BadStrategy",
-                tick_dict={"asset_slug": "x", "timeframe": "1m", "time": 0,
-                           "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1},
-                params={},
-                assets_dicts=[],
-            )
+    with patch("app.tasks.strategy.aioredis.from_url", AsyncMock(return_value=mock_redis)):
+        result = run_strategy(ctx.config_id, class_path, ctx.to_dict(), {})
 
-    mock_redis.delete.assert_called()
+    assert "No signal" in result
+
+
+def test_run_strategy_task_publishes_plan_on_signal():
+    """Strategy that returns an ExecutionPlan → xadd called on both streams."""
+    from app.tasks.strategy import run_strategy
+
+    ctx = _make_context()
+    class_path = f"{_SignalStrategy.__module__}.{_SignalStrategy.__qualname__}"
+
+    mock_redis = AsyncMock()
+    mock_redis.delete = AsyncMock()
+    mock_redis.xadd = AsyncMock(return_value="1-0")
+    mock_redis.aclose = AsyncMock()
+
+    with patch("app.tasks.strategy.aioredis.from_url", AsyncMock(return_value=mock_redis)):
+        result = run_strategy(ctx.config_id, class_path, ctx.to_dict(), {})
+
+    stream_keys = [c.args[0] for c in mock_redis.xadd.call_args_list]
+    assert "signals:trade" in stream_keys
+    assert "signals:broadcast" in stream_keys
+    assert "published" in result
+
+
+def test_run_strategy_task_always_releases_lock():
+    """Lock key is deleted even if strategy raises an exception."""
+    from app.tasks.strategy import run_strategy
+
+    ctx = _make_context()
+    class_path = f"{_FailStrategy.__module__}.{_FailStrategy.__qualname__}"
+
+    mock_redis = AsyncMock()
+    mock_redis.delete = AsyncMock()
+    mock_redis.xadd = AsyncMock(return_value="1-0")
+    mock_redis.aclose = AsyncMock()
+
+    with patch("app.tasks.strategy.aioredis.from_url", AsyncMock(return_value=mock_redis)):
+        with pytest.raises(RuntimeError):
+            run_strategy(ctx.config_id, class_path, ctx.to_dict(), {})
+
+    mock_redis.delete.assert_called_once_with(f"strategy_lock:{ctx.config_id}")
+
+
+# ── StrategyContext serialization round-trip ─────────────────────────
+
+def test_strategy_context_to_dict_from_dict_round_trip():
+    ctx = _make_context(close=50_000.0, leg_num=0)
+    ctx_dict = ctx.to_dict()
+    restored = StrategyContext.from_dict(ctx_dict)
+    assert restored.tick.close == pytest.approx(50_000.0)
+    assert restored.leg_num == 0
+    assert restored.config_id == ctx.config_id
+    assert len(restored.legs) == 1
+    assert restored.legs[0].symbol == "btcusdt"
+
+
+def test_strategy_context_from_dict_reconstructs_legs():
+    ctx = StrategyContext(
+        tick=_make_tick(),
+        leg_num=0,
+        legs=[_make_leg(0, "btcusdt"), _make_leg(1, "ethusdt")],
+        config_id="cfg-multi",
+    )
+    restored = StrategyContext.from_dict(ctx.to_dict())
+    assert len(restored.legs) == 2
+    symbols = [l.symbol for l in restored.legs]
+    assert "btcusdt" in symbols
+    assert "ethusdt" in symbols

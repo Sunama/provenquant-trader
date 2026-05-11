@@ -103,14 +103,14 @@ export function StrategyEditor({ initial }: Props) {
   const router = useRouter();
   const isEdit = !!initial;
 
-  const [id, setId] = useState(initial?.id ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [classPath, setClassPath] = useState(initial?.strategy_class ?? "");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [isPaper, setIsPaper] = useState(initial?.is_paper ?? true);
   const [params, setParams] = useState<Record<string, unknown>>(initial?.params ?? {});
-  const [assets, setAssets] = useState<Omit<StrategyAsset, "asset_num">[]>(
-    initial?.assets.map(({ asset_num: _, ...a }) => a) ?? []
+  const [assets, setAssets] = useState<Omit<StrategyAsset, "leg_num">[]>(
+    initial?.assets.map(({ leg_num: _, ...a }) => a) ?? []
   );
   const [exchangeRefs, setExchangeRefs] = useState<Omit<StrategyExchangeRef, "exchange_num">[]>(
     initial?.exchange_accounts.map(({ exchange_num: _, ...r }) => r) ?? []
@@ -149,14 +149,14 @@ export function StrategyEditor({ initial }: Props) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const body = {
-      id,
+      name,
       strategy_class: classPath,
       description,
       enabled,
       is_paper: isPaper,
       params,
       parameters_schema: schema?.parameter_schema,
-      assets: assets.map((a, i) => ({ ...a, asset_num: i })),
+      assets: assets.map((a, i) => ({ ...a, leg_num: i })),
       exchange_accounts: isPaper ? [] : exchangeRefs.map((r, i) => ({ ...r, exchange_num: i })),
     };
     mutation.mutate(body);
@@ -172,15 +172,17 @@ export function StrategyEditor({ initial }: Props) {
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Basic Info</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-xs text-muted-foreground mb-1">Strategy ID *</label>
+            <label className="block text-xs text-muted-foreground mb-1">Strategy Name *</label>
             <input
               required
-              disabled={isEdit}
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              placeholder="my-rsi-btc"
-              className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My RSI BTC Strategy"
+              className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
+            {isEdit && initial?.id && (
+              <p className="mt-0.5 text-xs text-muted-foreground font-mono">ID: {initial.id}</p>
+            )}
           </div>
           <div>
             <label className="block text-xs text-muted-foreground mb-1">Strategy Class *</label>
@@ -199,6 +201,9 @@ export function StrategyEditor({ initial }: Props) {
                         timeframe: s.timeframe,
                         market_type: s.market_type as StrategyAsset["market_type"],
                         tick_process: s.tick_process,
+                        role: s.role ?? "primary",
+                        subscribe_depth: s.subscribe_depth ?? false,
+                        exchange_account_num: 0,
                       }))
                     );
                   }
@@ -282,7 +287,7 @@ export function StrategyEditor({ initial }: Props) {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Assets</h2>
           <button
             type="button"
-            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0 }])}
+            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0, role: "primary", subscribe_depth: false, exchange_account_num: 0 }])}
             className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
           >
             <Plus className="h-3 w-3" />
@@ -345,14 +350,52 @@ export function StrategyEditor({ initial }: Props) {
                   </select>
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={asset.tick_process}
-                  onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, tick_process: e.target.checked } : a))}
-                />
-                Tick trigger (receiving this asset&apos;s tick triggers strategy execution)
-              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Role</label>
+                  <select
+                    value={asset.role}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, role: e.target.value } : a))}
+                    className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="primary">primary</option>
+                    <option value="hedge">hedge</option>
+                    <option value="reference">reference</option>
+                    <option value="signal">signal</option>
+                  </select>
+                </div>
+                {!isPaper && (
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">Exchange Account #</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={asset.exchange_account_num}
+                      onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, exchange_account_num: parseInt(e.target.value) || 0 } : a))}
+                      className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={asset.tick_process}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, tick_process: e.target.checked } : a))}
+                  />
+                  Tick trigger (receiving this asset&apos;s tick triggers strategy execution)
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={asset.subscribe_depth}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, subscribe_depth: e.target.checked } : a))}
+                  />
+                  Subscribe order book depth
+                </label>
+              </div>
             </div>
           );
         })}

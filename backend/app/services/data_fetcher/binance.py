@@ -120,7 +120,10 @@ class BinanceBaseDataFetcher(DataFetcher):
             streams.append(f"{sub.symbol.lower()}@kline_{_TF_MAP.get(sub.timeframe, '1m')}")
         for sym in self._symbols():
             streams.append(f"{sym}@aggTrade")
-            streams.append(f"{sym}@depth20@100ms")
+        # depth only for subscriptions that explicitly opt in
+        for sub in self._subscriptions.values():
+            if sub.subscribe_depth:
+                streams.append(f"{sub.symbol.lower()}@depth20@100ms")
         streams.extend(self._extra_streams())
         return f"{self._ws_base}?streams={'/'.join(streams)}"
 
@@ -167,7 +170,7 @@ class BinanceBaseDataFetcher(DataFetcher):
         seen: set[str] = set()
         async with httpx.AsyncClient(timeout=15) as client:
             for sub in list(self._subscriptions.values()):
-                key = f"{sub.symbol}:{sub.timeframe}"
+                key = f"{sub.symbol}:{sub.timeframe}:{sub.market_type}"
                 if key in seen:
                     continue
                 seen.add(key)
@@ -185,6 +188,7 @@ class BinanceBaseDataFetcher(DataFetcher):
                         {
                             "symbol": sub.symbol.lower(),
                             "timeframe": sub.timeframe,
+                            "market_type": sub.market_type,
                             "time": datetime.fromtimestamp(int(k[0]) / 1000, tz=timezone.utc),
                             "open": float(k[1]),
                             "high": float(k[2]),
@@ -200,7 +204,7 @@ class BinanceBaseDataFetcher(DataFetcher):
                                 insert(Tick).values(rows).on_conflict_do_nothing(constraint="uq_tick")
                             )
                             await db.commit()
-                        logger.info(f"[backfill] {symbol_upper} {interval}: seeded {len(rows)} bars")
+                        logger.info(f"[backfill] {symbol_upper} {interval} {sub.market_type}: seeded {len(rows)} bars")
                 except asyncio.CancelledError:
                     return
                 except Exception:
@@ -220,20 +224,30 @@ class BinanceBaseDataFetcher(DataFetcher):
                 logger.debug(f"[{self.__class__.__name__}] kline heartbeat: {self._kline_msg_count} messages")
 
             symbol = data.get("s", "").lower()
+            timeframe = kline.get("i", "1m")
             is_closed = bool(kline.get("x", False))
+
+            # Resolve market_type from subscription
+            sub_key = next(
+                (k for k, s in self._subscriptions.items() if s.symbol.lower() == symbol and s.timeframe == timeframe),
+                None,
+            )
+            market_type = self._subscriptions[sub_key].market_type if sub_key else "futures"
+
             tick = TickData(
                 symbol=symbol,
-                timeframe=kline.get("i", "1m"),
+                timeframe=timeframe,
                 time=int(kline["t"]),
                 open=float(kline["o"]),
                 high=float(kline["h"]),
                 low=float(kline["l"]),
                 close=float(kline["c"]),
                 volume=float(kline["v"]),
+                market_type=market_type,
                 is_closed=is_closed,
             )
             if is_closed:
-                logger.info(f"[bar] {tick.symbol} {tick.timeframe} close={tick.close:.4f} vol={tick.volume:.2f}")
+                logger.info(f"[bar] {tick.symbol} {tick.timeframe} {tick.market_type} close={tick.close:.4f} vol={tick.volume:.2f}")
             await self._emit(tick)
         except Exception:
             logger.exception(f"[{self.__class__.__name__}] kline parse error")
@@ -244,13 +258,21 @@ class BinanceBaseDataFetcher(DataFetcher):
             data = msg.get("data", msg)
             if data.get("e") != "aggTrade":
                 return
+            symbol = data.get("s", "").lower()
+            # Resolve market_type from any subscription for this symbol
+            sub_key = next(
+                (k for k, s in self._subscriptions.items() if s.symbol.lower() == symbol),
+                None,
+            )
+            market_type = self._subscriptions[sub_key].market_type if sub_key else "futures"
             agg = AggTradeData(
-                symbol=data.get("s", "").lower(),
+                symbol=symbol,
                 exchange="binance",
                 time=int(data["T"]),
                 price=float(data["p"]),
                 quantity=float(data["q"]),
                 is_buyer_maker=bool(data.get("m", False)),
+                market_type=market_type,
             )
             await self._emit_agg_trade(agg)
         except Exception:
@@ -264,12 +286,18 @@ class BinanceBaseDataFetcher(DataFetcher):
             symbol = stream_name.split("@")[0].lower() if stream_name else data.get("s", "").lower()
             if not symbol:
                 return
+            sub_key = next(
+                (k for k, s in self._subscriptions.items() if s.symbol.lower() == symbol),
+                None,
+            )
+            market_type = self._subscriptions[sub_key].market_type if sub_key else "futures"
             book = OrderBookData(
                 symbol=symbol,
                 exchange="binance",
                 time=int(data.get("T", time.time() * 1000)),
                 bids=data.get("b", [])[:20],
                 asks=data.get("a", [])[:20],
+                market_type=market_type,
             )
             await self._emit_orderbook(book)
         except Exception:

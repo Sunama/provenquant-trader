@@ -38,7 +38,7 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
                 strategy.enabled ? "bg-green-500" : "bg-muted-foreground"
               )}
             />
-            <span className="font-semibold">{strategy.id}</span>
+            <span className="font-semibold">{strategy.name}</span>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground font-mono">{strategy.strategy_class}</p>
           {strategy.description && (
@@ -49,7 +49,7 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
             <div className="mt-2 flex flex-wrap gap-1">
               {strategy.assets.map((a) => (
                 <span
-                  key={a.asset_num}
+                  key={a.leg_num}
                   className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium"
                 >
                   {a.symbol.toUpperCase()} {a.timeframe} ({a.market_type})

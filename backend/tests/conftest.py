@@ -38,12 +38,12 @@ def make_tick():
     """Factory: create a TickData with sensible defaults."""
     def _factory(
         close: float = 50_000.0,
-        asset_slug: str = "btcusdt",
+        symbol: str = "btcusdt",
         timeframe: str = "30m",
         **overrides,
     ) -> TickData:
         return TickData(
-            asset_slug=asset_slug,
+            symbol=symbol,
             timeframe=timeframe,
             time=1_700_000_000_000,
             open=overrides.get("open", close),

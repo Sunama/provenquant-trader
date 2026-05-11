@@ -4,23 +4,25 @@ No external services required.
 """
 import pytest
 from app.services.strategy_executer import (
+    AmountMode,
+    ExecutionPlan,
+    LegOrder,
     ParameterSchema,
-    SignalSide,
-    StrategyAssetConfig,
+    PriceMethod,
+    SignalAction,
     StrategyExecuter,
-    TradeSignal,
+    StrategyLeg,
 )
-from app.services.data_fetcher import Subscription, TickData
+from app.services.data_fetcher import Subscription
+from app.services.strategy_context import StrategyContext
 
 
-# ── Minimal concrete implementations for testing ──────────────────────
+# ── Minimal concrete implementation for testing ───────────────────────
 
-class _ModernStrategy(StrategyExecuter):
-    """New-style strategy: execute(tick, asset_num) -> list[TradeSignal]."""
-
+class _ConcreteStrategy(StrategyExecuter):
     @property
     def id(self) -> str:
-        return "modern_test"
+        return "concrete_test"
 
     @property
     def parameter_schema(self):
@@ -28,95 +30,45 @@ class _ModernStrategy(StrategyExecuter):
 
     @property
     def subscriptions(self):
-        return [Subscription("btcusdt", "1m")]
+        return [Subscription(symbol="btcusdt", timeframe="1m")]
 
-    async def execute(self, tick: TickData, asset_num: int) -> list[TradeSignal]:
-        return []
-
-
-class _LegacyStrategy(StrategyExecuter):
-    """Old-style strategy: execute(tick) -> TradeSignal | None (no asset_num)."""
-
-    @property
-    def id(self) -> str:
-        return "legacy_test"
-
-    @property
-    def parameter_schema(self):
-        return []
-
-    @property
-    def subscriptions(self):
-        return [Subscription("btcusdt", "1m")]
-
-    async def execute(self, tick: TickData):  # type: ignore[override]
+    async def execute(self, context: StrategyContext):
         return None
 
 
-# ── SignalSide enum ───────────────────────────────────────────────────
+# ── SignalAction enum ─────────────────────────────────────────────────
 
-def test_signal_side_is_string_enum():
-    assert SignalSide.LONG == "long"
-    assert SignalSide.SHORT == "short"
-    assert SignalSide.BUY == "buy"
-    assert SignalSide.SELL == "sell"
-    assert SignalSide.CALL == "call"
-    assert SignalSide.PUT == "put"
-
-
-def test_signal_side_can_be_constructed_from_string():
-    assert SignalSide("long") is SignalSide.LONG
-    assert SignalSide("short") is SignalSide.SHORT
+def test_signal_action_values():
+    assert SignalAction.BUY == "buy"
+    assert SignalAction.SELL == "sell"
+    assert SignalAction.OPEN_LONG == "open_long"
+    assert SignalAction.CLOSE_LONG == "close_long"
+    assert SignalAction.OPEN_SHORT == "open_short"
+    assert SignalAction.CLOSE_SHORT == "close_short"
 
 
-def test_signal_side_invalid_value_raises():
+def test_signal_action_from_string():
+    assert SignalAction("open_long") is SignalAction.OPEN_LONG
+    assert SignalAction("close_short") is SignalAction.CLOSE_SHORT
+
+
+def test_signal_action_invalid_value_raises():
     with pytest.raises(ValueError):
-        SignalSide("invalid")
+        SignalAction("long")  # old value, no longer valid
 
 
-# ── TradeSignal dataclass ─────────────────────────────────────────────
+# ── PriceMethod and AmountMode enums ─────────────────────────────────
 
-def test_trade_signal_required_fields():
-    sig = TradeSignal(
-        execute=SignalSide.LONG,
-        asset_num=0,
-        exchange_num=0,
-        market_type="futures",
-        amount=0.5,
-    )
-    assert sig.execute == SignalSide.LONG
-    assert sig.asset_num == 0
-    assert sig.exchange_num == 0
-    assert sig.market_type == "futures"
-    assert sig.amount == 0.5
+def test_price_method_values():
+    assert PriceMethod.MARKET == "market"
+    assert PriceMethod.LIMIT == "limit"
 
 
-def test_trade_signal_optional_fields_default_to_none():
-    sig = TradeSignal(execute=SignalSide.SHORT, asset_num=1, exchange_num=0, market_type="spot", amount=0.3)
-    assert sig.tp_pct is None
-    assert sig.sl_pct is None
-    assert sig.price is None
-
-
-def test_trade_signal_metadata_defaults_to_empty_dict():
-    sig = TradeSignal(execute=SignalSide.LONG, asset_num=0, exchange_num=0, market_type="futures", amount=1.0)
-    assert sig.metadata == {}
-
-
-def test_trade_signal_metadata_instances_are_independent():
-    """Each TradeSignal gets its own metadata dict (not shared)."""
-    s1 = TradeSignal(execute=SignalSide.LONG, asset_num=0, exchange_num=0, market_type="futures", amount=1.0)
-    s2 = TradeSignal(execute=SignalSide.SHORT, asset_num=0, exchange_num=0, market_type="futures", amount=1.0)
-    s1.metadata["key"] = "value"
-    assert "key" not in s2.metadata
-
-
-def test_trade_signal_multi_leg_asset_targeting():
-    """Multi-leg signals reference different asset_num and exchange_num."""
-    leg_long = TradeSignal(execute=SignalSide.LONG, asset_num=0, exchange_num=0, market_type="futures", amount=0.3)
-    leg_short = TradeSignal(execute=SignalSide.SHORT, asset_num=1, exchange_num=1, market_type="futures", amount=0.3)
-    assert leg_long.asset_num != leg_short.asset_num
-    assert leg_long.exchange_num != leg_short.exchange_num
+def test_amount_mode_values():
+    assert AmountMode.PORTFOLIO_PCT_REALIZED == "portfolio_pct_realized"
+    assert AmountMode.PORTFOLIO_PCT_UNREALIZED == "portfolio_pct_unrealized"
+    assert AmountMode.UNITS == "units"
+    assert AmountMode.RATIO_TO_LEG == "ratio_to_leg"
 
 
 # ── ParameterSchema dataclass ─────────────────────────────────────────
@@ -138,23 +90,133 @@ def test_parameter_schema_optional_fields_default_to_none():
     assert p.description == ""
 
 
-# ── StrategyAssetConfig dataclass ─────────────────────────────────────
+# ── StrategyLeg dataclass ─────────────────────────────────────────────
 
-def test_strategy_asset_config_stores_all_fields():
-    cfg = StrategyAssetConfig(
-        asset_num=1,
-        asset_slug="ethusdt",
+def test_strategy_leg_stores_required_fields():
+    leg = StrategyLeg(
+        leg_num=0,
+        role="primary",
+        symbol="btcusdt",
         exchange="binance",
-        timeframe="1h",
         market_type="futures",
-        tick_process=False,
+        timeframe="30m",
+        tick_process=True,
     )
-    assert cfg.asset_num == 1
-    assert cfg.asset_slug == "ethusdt"
-    assert cfg.exchange == "binance"
-    assert cfg.timeframe == "1h"
-    assert cfg.market_type == "futures"
-    assert cfg.tick_process is False
+    assert leg.leg_num == 0
+    assert leg.role == "primary"
+    assert leg.symbol == "btcusdt"
+    assert leg.exchange == "binance"
+    assert leg.market_type == "futures"
+    assert leg.timeframe == "30m"
+    assert leg.tick_process is True
+
+
+def test_strategy_leg_optional_fields_have_defaults():
+    leg = StrategyLeg(
+        leg_num=1, role="hedge", symbol="ethusdt",
+        exchange="binance", market_type="futures", timeframe="1h", tick_process=False,
+    )
+    assert leg.subscribe_depth is False
+    assert leg.base_asset == ""
+    assert leg.quote_asset == ""
+    assert leg.exchange_account_num == 0
+
+
+# ── LegOrder dataclass ────────────────────────────────────────────────
+
+def test_leg_order_required_fields():
+    order = LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=0.5)
+    assert order.leg_num == 0
+    assert order.action == SignalAction.OPEN_LONG
+    assert order.amount == 0.5
+
+
+def test_leg_order_optional_fields_have_defaults():
+    order = LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=0.5)
+    assert order.amount_mode == AmountMode.PORTFOLIO_PCT_REALIZED
+    assert order.price_method == PriceMethod.MARKET
+    assert order.price is None
+    assert order.tp_pct is None
+    assert order.sl_pct is None
+    assert order.reference_leg is None
+    assert order.metadata == {}
+
+
+def test_leg_order_metadata_instances_are_independent():
+    o1 = LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=0.5)
+    o2 = LegOrder(leg_num=1, action=SignalAction.OPEN_SHORT, amount=0.5)
+    o1.metadata["key"] = "value"
+    assert "key" not in o2.metadata
+
+
+def test_leg_order_to_dict_round_trips():
+    order = LegOrder(
+        leg_num=0,
+        action=SignalAction.OPEN_LONG,
+        amount=0.5,
+        amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+        price_method=PriceMethod.LIMIT,
+        price=50_000.0,
+        tp_pct=0.02,
+        sl_pct=0.01,
+    )
+    restored = LegOrder.from_dict(order.to_dict())
+    assert restored.leg_num == order.leg_num
+    assert restored.action == order.action
+    assert restored.amount == order.amount
+    assert restored.price == order.price
+    assert restored.tp_pct == order.tp_pct
+    assert restored.sl_pct == order.sl_pct
+
+
+def test_leg_order_from_dict_handles_optional_nulls():
+    d = {
+        "leg_num": 0,
+        "action": "open_short",
+        "amount": 0.3,
+        "amount_mode": "portfolio_pct_realized",
+        "reference_leg": None,
+        "price_method": "market",
+        "price": None,
+        "tp_pct": None,
+        "sl_pct": None,
+        "metadata": {},
+    }
+    order = LegOrder.from_dict(d)
+    assert order.action == SignalAction.OPEN_SHORT
+    assert order.price is None
+    assert order.reference_leg is None
+
+
+# ── ExecutionPlan dataclass ───────────────────────────────────────────
+
+def test_execution_plan_stores_orders():
+    orders = [LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=0.5)]
+    plan = ExecutionPlan(orders=orders)
+    assert len(plan.orders) == 1
+    assert plan.on_complete is None
+    assert plan.metadata == {}
+
+
+def test_execution_plan_to_dict_round_trips():
+    orders = [
+        LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=0.5),
+        LegOrder(leg_num=1, action=SignalAction.OPEN_SHORT, amount=0.5),
+    ]
+    plan = ExecutionPlan(orders=orders, on_complete="settle", metadata={"tag": "test"})
+    restored = ExecutionPlan.from_dict(plan.to_dict())
+    assert len(restored.orders) == 2
+    assert restored.on_complete == "settle"
+    assert restored.metadata == {"tag": "test"}
+
+
+def test_execution_plan_multi_leg():
+    plan = ExecutionPlan(orders=[
+        LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=0.3),
+        LegOrder(leg_num=1, action=SignalAction.OPEN_SHORT, amount=0.3),
+    ])
+    assert plan.orders[0].leg_num == 0
+    assert plan.orders[1].leg_num == 1
 
 
 # ── StrategyExecuter abstract class ──────────────────────────────────
@@ -164,39 +226,29 @@ def test_strategy_executer_cannot_be_instantiated():
         StrategyExecuter()  # type: ignore
 
 
-def test_modern_strategy_accepts_params_and_assets():
-    strategy = _ModernStrategy(
-        params={"alpha": 0.1},
-        assets=[StrategyAssetConfig(0, "btcusdt", "binance", "1m", "futures", True)],
+def test_concrete_strategy_can_be_instantiated():
+    s = _ConcreteStrategy()
+    assert s.id == "concrete_test"
+    assert s.params == {}
+    assert s.legs == []
+    assert s.config_id == ""
+
+
+def test_strategy_executer_accepts_params_and_legs():
+    leg = StrategyLeg(
+        leg_num=0, role="primary", symbol="btcusdt",
+        exchange="binance", market_type="futures", timeframe="30m", tick_process=True,
     )
-    assert strategy.params == {"alpha": 0.1}
-    assert len(strategy.assets) == 1
+    s = _ConcreteStrategy(params={"period": 14}, legs=[leg])
+    assert s.params == {"period": 14}
+    assert len(s.legs) == 1
 
 
-def test_strategy_params_default_to_empty_dict():
-    strategy = _ModernStrategy()
-    assert strategy.params == {}
+def test_strategy_executer_params_default_to_empty_dict():
+    s = _ConcreteStrategy()
+    assert s.params == {}
 
 
-def test_strategy_assets_default_to_empty_list():
-    strategy = _ModernStrategy()
-    assert strategy.assets == []
-
-
-# ── _is_legacy() compatibility shim ─────────────────────────────────
-
-def test_is_legacy_returns_false_for_modern_strategy():
-    assert _ModernStrategy._is_legacy() is False
-
-
-def test_is_legacy_returns_true_for_legacy_strategy():
-    assert _LegacyStrategy._is_legacy() is True
-
-
-def test_is_legacy_based_on_execute_signature():
-    """The shim checks whether 'asset_num' appears in execute()'s parameters."""
-    import inspect
-    modern_sig = inspect.signature(_ModernStrategy.execute)
-    legacy_sig = inspect.signature(_LegacyStrategy.execute)
-    assert "asset_num" in modern_sig.parameters
-    assert "asset_num" not in legacy_sig.parameters
+def test_strategy_executer_legs_default_to_empty_list():
+    s = _ConcreteStrategy()
+    assert s.legs == []

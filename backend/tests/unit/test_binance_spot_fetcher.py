@@ -68,8 +68,10 @@ def test_spot_all_streams_url_contains_agg_trade():
 
 
 def test_spot_all_streams_url_contains_depth():
+    _sub_depth = Subscription("ethusdt", "1m", "binance", "spot", subscribe_depth=True)
+    _key_depth = "ethusdt:1m:spot"
     f = BinanceSpotDataFetcher()
-    f._subscriptions = {_KEY: _SUB}
+    f._subscriptions = {_key_depth: _sub_depth}
     url = f._all_streams_url()
     assert "ethusdt@depth20@100ms" in url
 
@@ -141,7 +143,7 @@ async def test_spot_handle_kline_closed_bar_emits_tick(mock_redis):
     assert len(received) == 1
     tick = received[0]
     assert isinstance(tick, TickData)
-    assert tick.asset_slug == "ethusdt"
+    assert tick.symbol == "ethusdt"
     assert tick.close == pytest.approx(3_000.0)
 
 
@@ -181,7 +183,7 @@ async def test_spot_handle_agg_trade_emits_correct_fields(mock_redis):
     assert isinstance(trade, AggTradeData)
     assert trade.price == pytest.approx(3_000.0)
     assert trade.quantity == pytest.approx(0.5)
-    assert trade.asset_slug == "ethusdt"
+    assert trade.symbol == "ethusdt"
     assert trade.is_buyer_maker is False
 
 

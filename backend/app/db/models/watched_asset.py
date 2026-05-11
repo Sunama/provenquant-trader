@@ -2,6 +2,7 @@ from typing import Optional
 
 import sqlalchemy as sa
 from app.db.base_class import Base
+from app.core.enums import MarketType
 from sqlalchemy.orm import Mapped, mapped_column
 
 

@@ -45,7 +45,7 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
             <span
               className={cn("h-2 w-2 rounded-full", strategy.enabled ? "bg-green-500" : "bg-muted-foreground")}
             />
-            <h1 className="text-2xl font-bold">{strategy.id}</h1>
+            <h1 className="text-2xl font-bold">{strategy.name}</h1>
           </div>
           <p className="text-sm text-muted-foreground font-mono">{strategy.strategy_class}</p>
         </div>
@@ -82,12 +82,15 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
       </div>
 
       {strategy.assets.map((asset) => (
-        <div key={asset.asset_num} className="rounded-lg border bg-card p-5">
+        <div key={asset.leg_num} className="rounded-lg border bg-card p-5">
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <p className="text-sm font-semibold uppercase">{asset.symbol}</p>
             <span className="text-xs text-muted-foreground">
               {asset.exchange} • {asset.timeframe} • {asset.market_type}
             </span>
+            {asset.role !== "primary" && (
+              <span className="text-xs rounded-full bg-secondary text-secondary-foreground px-2 py-0.5">{asset.role}</span>
+            )}
             {asset.tick_process && (
               <span className="text-xs rounded-full bg-primary/10 text-primary px-2 py-0.5">trigger</span>
             )}

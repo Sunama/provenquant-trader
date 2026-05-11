@@ -98,7 +98,7 @@ async def test_options_mark_price_symbol_is_lowercased(mock_redis):
     received = []
     f.add_mark_price_callback(AsyncMock(side_effect=lambda d: received.append(d)))
     await f._handle_mark_price(_mark_price_msg("BTC-240628-60000-C", 1_500.0, 67_000.0))
-    assert received[0].asset_slug == "btc-240628-60000-c"
+    assert received[0].symbol == "btc-240628-60000-c"
 
 
 @pytest.mark.asyncio
@@ -169,7 +169,7 @@ async def test_options_index_asset_slug_includes_usdt(mock_redis):
     received = []
     f.add_mark_price_callback(AsyncMock(side_effect=lambda d: received.append(d)))
     await f._handle_index(_index_msg("BTC", 67_000.0))
-    assert received[0].asset_slug == "btcusdt"
+    assert received[0].symbol == "btcusdt"
 
 
 @pytest.mark.asyncio
@@ -178,4 +178,4 @@ async def test_options_index_underlying_is_lowercased(mock_redis):
     received = []
     f.add_mark_price_callback(AsyncMock(side_effect=lambda d: received.append(d)))
     await f._handle_index(_index_msg("ETH", 3_000.0))
-    assert received[0].asset_slug == "ethusdt"
+    assert received[0].symbol == "ethusdt"

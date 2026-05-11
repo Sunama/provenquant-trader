@@ -60,7 +60,7 @@ class DataCollector(ABC):
     # ── Tick flush ────────────────────────────────────────────────
 
     async def _flush_ticks(self, r: aioredis.Redis, db) -> int:
-        keys = await r.keys("tick:*:*")
+        keys = await r.keys("tick:*:*:*")
         rows = []
         for key in keys:
             items = await r.lrange(key, 0, -1)
@@ -71,6 +71,7 @@ class DataCollector(ABC):
                     rows.append({
                         "symbol": d["symbol"],
                         "timeframe": d["timeframe"],
+                        "market_type": d.get("market_type", "futures"),
                         "time": _ms_to_dt(d["time"]),
                         "open": d["open"],
                         "high": d["high"],
@@ -100,6 +101,7 @@ class DataCollector(ABC):
                 rows.append({
                     "symbol": d["symbol"],
                     "exchange": d["exchange"],
+                    "market_type": d.get("market_type", "futures"),
                     "time": _ms_to_dt(d["time"]),
                     "rate": d["rate"],
                 })
@@ -152,6 +154,7 @@ class DataCollector(ABC):
                     rows.append({
                         "symbol": d["symbol"],
                         "exchange": d["exchange"],
+                        "market_type": d.get("market_type", "futures"),
                         "time": _ms_to_dt(d["time"]),
                         "oi_contracts": d["oi_contracts"],
                         "oi_value": d.get("oi_value"),
@@ -178,6 +181,7 @@ class DataCollector(ABC):
         return {
             "symbol": fields["symbol"],
             "exchange": fields["exchange"],
+            "market_type": fields.get("market_type", "futures"),
             "time": _ms_to_dt(int(fields["time"])),
             "side": fields["side"],
             "price": float(fields["price"]),
@@ -189,6 +193,7 @@ class DataCollector(ABC):
         return {
             "symbol": fields["symbol"],
             "exchange": fields["exchange"],
+            "market_type": fields.get("market_type", "futures"),
             "time": _ms_to_dt(int(fields["time"])),
             "price": float(fields["price"]),
             "quantity": float(fields["quantity"]),

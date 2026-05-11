@@ -1,10 +1,13 @@
 export interface StrategyAsset {
-  asset_num: number;
+  leg_num: number;
+  role: string;
   symbol: string;
   exchange: string;
   timeframe: string;
   market_type: "spot" | "futures" | "options";
   tick_process: boolean;
+  subscribe_depth: boolean;
+  exchange_account_num: number;
   base_asset?: string;
   quote_asset?: string;
   description?: string;
@@ -35,7 +38,7 @@ export type SignalAction =
 
 export interface SignalDefinition {
   name: string;
-  asset_num: number;
+  leg_num: number;
   exchange_num: number;
   market_type: string;
   execute: SignalAction;
@@ -44,6 +47,7 @@ export interface SignalDefinition {
 
 export interface Strategy {
   id: string;
+  name: string;
   strategy_class: string;
   description?: string;
   enabled: boolean;
@@ -98,6 +102,8 @@ export interface DefaultSubscription {
   timeframe: string;
   market_type: "spot" | "futures" | "options";
   tick_process: boolean;
+  role?: string;
+  subscribe_depth?: boolean;
   description: string;
 }
 
@@ -192,7 +198,7 @@ export interface SignalPayload {
   strategy_id: string;
   config_id: string;
   execute: string;
-  asset_num: string;
+  leg_num: string;
   exchange_num: string;
   market_type: string;
   amount: string;

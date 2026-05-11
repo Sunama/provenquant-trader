@@ -38,7 +38,7 @@ def test_ms_to_dt_returns_timezone_aware():
 
 def test_parse_liquidation_maps_all_fields():
     fields = {
-        "asset_slug": "btcusdt",
+        "symbol": "btcusdt",
         "exchange": "binance",
         "time": "1700000000000",
         "side": "long_liq",
@@ -46,7 +46,7 @@ def test_parse_liquidation_maps_all_fields():
         "quantity": "1.5",
     }
     row = DefaultDataCollector._parse_liquidation(fields)
-    assert row["asset_slug"] == "btcusdt"
+    assert row["symbol"] == "btcusdt"
     assert row["exchange"] == "binance"
     assert row["side"] == "long_liq"
     assert row["price"] == pytest.approx(50_000.0)
@@ -56,7 +56,7 @@ def test_parse_liquidation_maps_all_fields():
 
 def test_parse_agg_trade_maps_all_fields():
     fields = {
-        "asset_slug": "ethusdt",
+        "symbol": "ethusdt",
         "exchange": "binance",
         "time": "1700000000000",
         "price": "3000.0",
@@ -64,7 +64,7 @@ def test_parse_agg_trade_maps_all_fields():
         "is_buyer_maker": "True",
     }
     row = DefaultDataCollector._parse_agg_trade(fields)
-    assert row["asset_slug"] == "ethusdt"
+    assert row["symbol"] == "ethusdt"
     assert row["price"] == pytest.approx(3_000.0)
     assert row["quantity"] == pytest.approx(0.5)
     assert row["is_buyer_maker"] is True
@@ -72,7 +72,7 @@ def test_parse_agg_trade_maps_all_fields():
 
 def test_parse_agg_trade_is_buyer_maker_false():
     fields = {
-        "asset_slug": "btcusdt", "exchange": "binance",
+        "symbol": "btcusdt", "exchange": "binance",
         "time": "0", "price": "1.0", "quantity": "1.0",
         "is_buyer_maker": "False",
     }
@@ -82,7 +82,7 @@ def test_parse_agg_trade_is_buyer_maker_false():
 
 def test_parse_agg_trade_missing_is_buyer_maker_defaults_false():
     fields = {
-        "asset_slug": "btcusdt", "exchange": "binance",
+        "symbol": "btcusdt", "exchange": "binance",
         "time": "0", "price": "1.0", "quantity": "1.0",
     }
     row = DefaultDataCollector._parse_agg_trade(fields)
@@ -117,7 +117,7 @@ async def test_flush_ticks_returns_zero_when_no_keys():
 async def test_flush_ticks_reads_and_deletes_each_key():
     collector = DefaultDataCollector()
     tick_json = json.dumps({
-        "asset_slug": "btcusdt", "timeframe": "1m",
+        "symbol": "btcusdt", "timeframe": "1m",
         "time": 1_700_000_000_000,
         "open": 50_000.0, "high": 50_100.0, "low": 49_900.0,
         "close": 50_050.0, "volume": 100.0,
@@ -151,7 +151,7 @@ async def test_flush_ticks_skips_malformed_json():
 async def test_flush_funding_rates_reads_redis_set():
     collector = DefaultDataCollector()
     funding_json = json.dumps({
-        "asset_slug": "btcusdt", "exchange": "binance",
+        "symbol": "btcusdt", "exchange": "binance",
         "time": 1_700_000_000_000, "rate": 0.0001,
     })
     mock_r = AsyncMock()
@@ -193,7 +193,7 @@ async def test_flush_stream_returns_zero_when_no_messages():
 async def test_flush_stream_acks_messages_after_insert():
     collector = DefaultDataCollector()
     fields = {
-        "asset_slug": "btcusdt", "exchange": "binance",
+        "symbol": "btcusdt", "exchange": "binance",
         "time": "1700000000000", "side": "long_liq",
         "price": "50000.0", "quantity": "1.0",
     }

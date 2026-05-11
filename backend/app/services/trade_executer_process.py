@@ -17,7 +17,7 @@ from app.db.models.strategy_asset import StrategyAsset
 from app.db.models.strategy_config import StrategyConfig
 from app.db.models.trade_history import TradeHistory
 from app.db.session import SessionLocal
-from app.services.strategy_executer import PriceMethod, SignalAction, TradeSignal
+from app.services.strategy_executer import AmountMode, LegOrder, PriceMethod, SignalAction
 from app.services.trade_adapter.paper import PaperTradeAdapter
 from app.services.trade_adapter import TradeAdapter
 
@@ -25,16 +25,14 @@ logger = logging.getLogger(__name__)
 
 _STREAM_KEY = "signals:trade"
 _EXEC_STREAM = "executions:broadcast"
+_CALLBACKS_STREAM = "executions:callbacks"
 _GROUP_NAME = "trade-executer"
 _CONSUMER_NAME = f"worker-{os.getpid()}"
-_MAX_SIGNAL_AGE_SECONDS = 30  # discard stale signals older than this
+_MAX_SIGNAL_AGE_SECONDS = 30
 _STREAM_MAXLEN = 10000
 
-# Actions that open a new position
 _OPENING_ACTIONS = {SignalAction.OPEN_LONG, SignalAction.OPEN_SHORT, SignalAction.BUY}
-# Actions that close an existing position
 _CLOSING_ACTIONS = {SignalAction.CLOSE_LONG, SignalAction.CLOSE_SHORT, SignalAction.SELL}
-# Mapping from open action to its corresponding side string (for Position.side)
 _ACTION_TO_SIDE = {
     SignalAction.OPEN_LONG: "long",
     SignalAction.OPEN_SHORT: "short",
@@ -47,14 +45,13 @@ _ACTION_TO_SIDE = {
 
 class TradeExecuterProcess:
     """
-    Long-running process that consumes trade signals from Redis Stream "signals:trade"
+    Long-running process that consumes ExecutionPlans from Redis Stream "signals:trade"
     via consumer group semantics (at-least-once delivery) and executes them via
     the configured TradeAdapter.
 
-    Signal routing:
-      - asset_num → resolved to actual symbol via DB (strategy_assets table)
-      - exchange_num → resolved to ExchangeAccount, which determines the adapter
-      - For paper trading: PaperTradeAdapter (Redis-backed) is used for all exchanges
+    Each stream message contains a JSON-encoded list of LegOrders. Orders within one
+    ExecutionPlan are processed sequentially. If `on_complete` is set on the plan, a
+    notification is published to the "executions:callbacks" stream after all orders execute.
     """
 
     def __init__(self) -> None:
@@ -98,14 +95,14 @@ class TradeExecuterProcess:
                     continue
                 for _stream, messages in entries:
                     for msg_id, fields in messages:
-                        await self._handle_signal(msg_id, fields)
+                        await self._handle_message(msg_id, fields)
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("Error in TradeExecuterProcess run loop")
                 await asyncio.sleep(1)
 
-    async def _handle_signal(self, msg_id: str, fields: dict) -> None:
+    async def _handle_message(self, msg_id: str, fields: dict) -> None:
         try:
             ts = float(fields.get("ts", 0))
             if time.time() - ts > _MAX_SIGNAL_AGE_SECONDS:
@@ -114,53 +111,60 @@ class TradeExecuterProcess:
                 return
 
             config_id = fields.get("config_id", "")
-            strategy_id = fields.get("strategy_id", "")
-            asset_num = int(fields.get("asset_num", 0))
-            exchange_num = int(fields.get("exchange_num", 0))
-            execute_str = fields.get("execute", "open_long")
-            market_type = fields.get("market_type", "futures")
-            amount = float(fields.get("amount", 1.0))
-            price_method_str = fields.get("price_method", "market")
-            tp_pct = float(fields["tp_pct"]) if fields.get("tp_pct") else None
-            sl_pct = float(fields["sl_pct"]) if fields.get("sl_pct") else None
-            price = float(fields["price"]) if fields.get("price") else None
+            strategy_id = fields.get("strategy_id", config_id)
+            on_complete = fields.get("on_complete") or None
+            tick_close = float(fields.get("tick_close", 0))
+            tick_market_type = fields.get("tick_market_type", "futures")
 
+            raw_orders = fields.get("orders", "[]")
             try:
-                execute = SignalAction(execute_str)
-            except ValueError:
-                logger.warning(f"Unknown SignalAction '{execute_str}', skipping")
+                orders_data: list[dict] = json.loads(raw_orders)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid orders JSON in message {msg_id}")
                 await self._redis.xack(_STREAM_KEY, _GROUP_NAME, msg_id)
                 return
 
-            try:
-                price_method = PriceMethod(price_method_str)
-            except ValueError:
-                price_method = PriceMethod.MARKET
-
-            asset_symbol, timeframe, base_asset, quote_asset = await self._resolve_asset(config_id, asset_num)
-            if not asset_symbol:
-                logger.warning(f"Could not resolve asset_num={asset_num} for config={config_id}")
+            orders = [LegOrder.from_dict(o) for o in orders_data]
+            if not orders:
                 await self._redis.xack(_STREAM_KEY, _GROUP_NAME, msg_id)
                 return
 
-            signal = TradeSignal(
-                execute=execute,
-                asset_num=asset_num,
-                exchange_num=exchange_num,
-                market_type=market_type,
-                amount=amount,
-                price_method=price_method,
-                tp_pct=tp_pct,
-                sl_pct=sl_pct,
-                price=price,
-                metadata={"symbol": asset_symbol, "timeframe": timeframe},
-            )
+            adapter = await self._resolve_adapter(config_id)
+            executed_count = 0
 
-            adapter = await self._resolve_adapter(config_id, exchange_num)
-            await self._execute_signal(
-                signal, adapter, strategy_id, asset_symbol,
-                base_asset, quote_asset, price,
-            )
+            for order in orders:
+                leg_meta = await self._resolve_leg(config_id, order.leg_num)
+                if not leg_meta:
+                    logger.warning(f"Could not resolve leg_num={order.leg_num} for config={config_id}")
+                    continue
+
+                symbol, timeframe, market_type, base_asset, quote_asset = leg_meta
+                price = order.price if order.price else tick_close
+
+                await self._execute_order(
+                    order=order,
+                    adapter=adapter,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    market_type=market_type,
+                    base_asset=base_asset,
+                    quote_asset=quote_asset,
+                    signal_price=price,
+                )
+                executed_count += 1
+
+            if on_complete and executed_count > 0:
+                await self._redis.xadd(
+                    _CALLBACKS_STREAM,
+                    {
+                        "config_id": config_id,
+                        "strategy_id": strategy_id,
+                        "on_complete": on_complete,
+                        "executed_orders": str(executed_count),
+                        "ts": str(time.time()),
+                    },
+                    maxlen=_STREAM_MAXLEN,
+                )
 
             await self._redis.xack(_STREAM_KEY, _GROUP_NAME, msg_id)
 
@@ -168,20 +172,27 @@ class TradeExecuterProcess:
             logger.exception(f"Error handling signal {msg_id}")
             # Do not ack — will be re-delivered (at-least-once)
 
-    async def _resolve_asset(self, config_id: str, asset_num: int) -> tuple[str, str, str, str]:
+    async def _resolve_leg(self, config_id: str, leg_num: int) -> tuple[str, str, str, str, str] | None:
+        """Returns (symbol, timeframe, market_type, base_asset, quote_asset) or None."""
         async with SessionLocal() as session:
             result = await session.execute(
                 select(StrategyAsset).where(
                     StrategyAsset.strategy_id == config_id,
-                    StrategyAsset.asset_num == asset_num,
+                    StrategyAsset.leg_num == leg_num,
                 )
             )
             asset = result.scalar_one_or_none()
         if asset:
-            return asset.symbol, asset.timeframe, asset.base_asset or "", asset.quote_asset or ""
-        return "", "", "", ""
+            return (
+                asset.symbol,
+                asset.timeframe,
+                asset.market_type,
+                asset.base_asset or "",
+                asset.quote_asset or "",
+            )
+        return None
 
-    async def _resolve_adapter(self, config_id: str, exchange_num: int) -> TradeAdapter:
+    async def _resolve_adapter(self, config_id: str) -> TradeAdapter:
         async with SessionLocal() as session:
             config = await session.get(StrategyConfig, config_id)
         if not config or config.is_paper:
@@ -189,75 +200,120 @@ class TradeExecuterProcess:
             if config and config.params:
                 initial_assets = config.params.get("initial_assets", {})
             return PaperTradeAdapter(config_id=config_id, initial_assets=initial_assets)
-        # TODO: resolve ExchangeAccount by config_id + exchange_num,
-        # decrypt credentials, and return BinanceLiveAdapter.
         logger.warning(f"Live adapter not implemented for config={config_id}, falling back to paper")
         return PaperTradeAdapter(config_id=config_id)
 
-    async def _execute_signal(
+    async def _compute_size(
         self,
-        signal: TradeSignal,
+        order: LegOrder,
+        adapter: TradeAdapter,
+        config_id: str,
+        symbol: str,
+        price: float,
+    ) -> float:
+        """Convert LegOrder.amount + AmountMode into a concrete size (number of units)."""
+        if order.amount_mode == AmountMode.UNITS:
+            return order.amount
+
+        if order.amount_mode == AmountMode.RATIO_TO_LEG:
+            if order.reference_leg is None:
+                logger.warning(f"RATIO_TO_LEG without reference_leg for config={config_id}")
+                return 0.0
+            leg_meta = await self._resolve_leg(config_id, order.reference_leg)
+            if not leg_meta:
+                return 0.0
+            ref_symbol = leg_meta[0]
+            ref_pos = await adapter.get_open_position(ref_symbol)
+            if not ref_pos:
+                return 0.0
+            return ref_pos.size * order.amount
+
+        if order.amount_mode == AmountMode.PORTFOLIO_PCT_UNREALIZED:
+            # Total portfolio = cash + unrealized value of all open positions
+            balance = await adapter.get_balance()
+            # PaperTradeAdapter doesn't expose all open positions; approximate with balance
+            # Real implementation would iterate open positions and sum notional value
+            portfolio_value = balance  # TODO: add unrealized position values
+            cost = portfolio_value * order.amount
+            return cost / price if price else 0.0
+
+        # Default: PORTFOLIO_PCT_REALIZED — fraction of cash balance
+        balance = await adapter.get_balance()
+        cost = balance * order.amount
+        return cost / price if price else 0.0
+
+    async def _execute_order(
+        self,
+        order: LegOrder,
         adapter: TradeAdapter,
         strategy_id: str,
         symbol: str,
+        market_type: str,
         base_asset: str,
         quote_asset: str,
-        signal_price: float | None,
+        signal_price: float,
     ) -> None:
-        execute = signal.execute
+        execute = order.action
 
         if execute in _CLOSING_ACTIONS:
-            # Pure close signal
             side = _ACTION_TO_SIDE[execute]
             current = await adapter.get_open_position(symbol)
             if current:
                 await self._close_position(
                     adapter, strategy_id, symbol, side, signal_price, "signal",
-                    base_asset, quote_asset,
+                    base_asset, quote_asset, market_type,
                 )
             else:
                 logger.debug(f"CLOSE signal for {symbol} but no open position — ignoring")
             return
 
-        # Opening signal — close opposite side first if needed
         new_side = _ACTION_TO_SIDE[execute]
         current = await adapter.get_open_position(symbol)
         if current and current.side != new_side:
             await self._close_position(
                 adapter, strategy_id, symbol, current.side, signal_price, "signal",
-                base_asset, quote_asset,
+                base_asset, quote_asset, market_type,
             )
         elif current and current.side == new_side:
             logger.debug(f"Already {new_side} on {symbol}, skipping entry")
             return
 
         await self._open_position(
-            adapter, strategy_id, symbol, signal, signal_price, base_asset, quote_asset,
+            order=order,
+            adapter=adapter,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            market_type=market_type,
+            signal_price=signal_price,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
         )
 
     async def _open_position(
         self,
+        order: LegOrder,
         adapter: TradeAdapter,
         strategy_id: str,
         symbol: str,
-        signal: TradeSignal,
-        price: float | None,
+        market_type: str,
+        signal_price: float,
         base_asset: str,
         quote_asset: str,
     ) -> None:
-        balance = await adapter.get_balance()
-        entry_price = price or balance
-        cost = balance * signal.amount
-        size = cost / entry_price if entry_price else 0
+        entry_price = signal_price or 1.0
+        size = await self._compute_size(order, adapter, strategy_id, symbol, entry_price)
+        if size <= 0:
+            logger.warning(f"Computed size=0 for {symbol}, skipping open")
+            return
 
-        side = _ACTION_TO_SIDE[signal.execute]
+        side = _ACTION_TO_SIDE[order.action]
         is_long = side == "long"
         tp_price = None
         sl_price = None
-        if signal.tp_pct:
-            tp_price = entry_price * (1 + signal.tp_pct) if is_long else entry_price * (1 - signal.tp_pct)
-        if signal.sl_pct:
-            sl_price = entry_price * (1 - signal.sl_pct) if is_long else entry_price * (1 + signal.sl_pct)
+        if order.tp_pct:
+            tp_price = entry_price * (1 + order.tp_pct) if is_long else entry_price * (1 - order.tp_pct)
+        if order.sl_pct:
+            sl_price = entry_price * (1 - order.sl_pct) if is_long else entry_price * (1 + order.sl_pct)
 
         result = await adapter.open_position(
             symbol=symbol,
@@ -266,9 +322,10 @@ class TradeExecuterProcess:
             price=entry_price,
             tp_price=tp_price,
             sl_price=sl_price,
-            price_method=signal.price_method,
+            price_method=order.price_method,
         )
 
+        cost = result.size * result.price
         async with SessionLocal() as db:
             pos = Position(
                 strategy_id=strategy_id,
@@ -284,7 +341,7 @@ class TradeExecuterProcess:
             th = TradeHistory(
                 strategy_id=strategy_id,
                 occurred_at=datetime.now(timezone.utc),
-                trade_type=signal.execute.value,
+                trade_type=order.action.value,
                 symbol=symbol,
                 base_asset=base_asset,
                 quote_asset=quote_asset,
@@ -296,10 +353,9 @@ class TradeExecuterProcess:
                 fee=0.0,
                 fee_asset=quote_asset,
                 exchange="binance",
-                market_type=signal.market_type,
+                market_type=market_type,
             )
             db.add(th)
-
             await db.commit()
             await db.refresh(pos)
 
@@ -312,7 +368,7 @@ class TradeExecuterProcess:
             size=result.size,
             position_id=pos.id,
         )
-        logger.info(f"Opened {side} position on {symbol} @ {result.price}")
+        logger.info(f"Opened {side} position on {symbol} @ {result.price} (size={result.size})")
 
     async def _close_position(
         self,
@@ -324,6 +380,7 @@ class TradeExecuterProcess:
         reason: str,
         base_asset: str,
         quote_asset: str,
+        market_type: str = "futures",
     ) -> None:
         result = await adapter.close_position(symbol, side, price or 0, reason)
 
@@ -369,7 +426,7 @@ class TradeExecuterProcess:
                     fee=0.0,
                     fee_asset=quote_asset,
                     exchange="binance",
-                    market_type="futures",
+                    market_type=market_type,
                 )
                 db.add(th)
                 await db.commit()
@@ -390,3 +447,4 @@ class TradeExecuterProcess:
     async def _broadcast_execution(self, action: str, **kwargs) -> None:
         payload = {"action": action, "ts": str(time.time()), **{k: str(v) for k, v in kwargs.items()}}
         await self._redis.xadd(_EXEC_STREAM, payload, maxlen=_STREAM_MAXLEN)
+

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 import pkgutil
+import uuid
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -37,6 +38,9 @@ class StrategyAssetIn(BaseModel):
     timeframe: str
     market_type: str
     tick_process: bool = False
+    role: str = "primary"
+    subscribe_depth: bool = False
+    exchange_account_num: int = 0
     description: Optional[str] = None
 
 
@@ -46,7 +50,7 @@ class StrategyExchangeRefIn(BaseModel):
 
 
 class StrategyConfigCreate(BaseModel):
-    id: str
+    name: str
     strategy_class: str
     description: Optional[str] = None
     enabled: bool = True
@@ -59,6 +63,7 @@ class StrategyConfigCreate(BaseModel):
 
 
 class StrategyConfigUpdate(BaseModel):
+    name: Optional[str] = None
     strategy_class: Optional[str] = None
     description: Optional[str] = None
     enabled: Optional[bool] = None
@@ -73,6 +78,7 @@ class StrategyConfigUpdate(BaseModel):
 def _serialize(config: StrategyConfig) -> dict:
     return {
         "id": config.id,
+        "name": config.name,
         "strategy_class": config.strategy_class,
         "description": config.description,
         "enabled": config.enabled,
@@ -84,12 +90,15 @@ def _serialize(config: StrategyConfig) -> dict:
         "updated_at": config.updated_at.isoformat() if config.updated_at else None,
         "assets": [
             {
-                "asset_num": a.asset_num,
+                "leg_num": a.leg_num,
+                "role": a.role,
                 "symbol": a.symbol,
                 "exchange": a.exchange,
                 "timeframe": a.timeframe,
                 "market_type": a.market_type,
                 "tick_process": a.tick_process,
+                "subscribe_depth": a.subscribe_depth,
+                "exchange_account_num": a.exchange_account_num,
                 "description": a.description,
                 "base_asset": a.base_asset,
                 "quote_asset": a.quote_asset,
@@ -169,6 +178,7 @@ async def list_strategy_classes():
                                 "timeframe": s.timeframe,
                                 "market_type": s.market_type,
                                 "tick_process": s.tick_process,
+                                "subscribe_depth": s.subscribe_depth,
                                 "description": s.description,
                             }
                             for s in instance.subscriptions
@@ -212,6 +222,7 @@ async def get_strategy_schema(class_path: str):
                 "timeframe": s.timeframe,
                 "market_type": s.market_type,
                 "tick_process": s.tick_process,
+                "subscribe_depth": s.subscribe_depth,
                 "description": s.description,
             }
             for s in instance.subscriptions
@@ -259,14 +270,12 @@ async def get_strategy(strategy_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/", status_code=201)
 async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends(get_db)):
-    existing = await db.get(StrategyConfig, body.id)
-    if existing:
-        raise HTTPException(status_code=409, detail="Strategy ID already exists")
-
     asset_info = await _validate_assets(body.assets)
 
+    new_id = str(uuid.uuid4())
     config = StrategyConfig(
-        id=body.id,
+        id=new_id,
+        name=body.name,
         strategy_class=body.strategy_class,
         description=body.description,
         enabled=body.enabled,
@@ -280,13 +289,16 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
     for i, asset_in in enumerate(body.assets):
         base_asset, quote_asset = asset_info[i]
         db.add(StrategyAsset(
-            strategy_id=body.id,
-            asset_num=i,
+            strategy_id=new_id,
+            leg_num=i,
+            role=asset_in.role,
             symbol=asset_in.symbol,
             exchange=asset_in.exchange,
             timeframe=asset_in.timeframe,
             market_type=asset_in.market_type,
             tick_process=asset_in.tick_process,
+            subscribe_depth=asset_in.subscribe_depth,
+            exchange_account_num=asset_in.exchange_account_num,
             description=asset_in.description,
             base_asset=base_asset,
             quote_asset=quote_asset,
@@ -294,7 +306,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
 
     for i, ref_in in enumerate(body.exchange_accounts):
         db.add(StrategyExchangeRef(
-            strategy_id=body.id,
+            strategy_id=new_id,
             exchange_num=i,
             exchange_account_id=ref_in.exchange_account_id,
             description=ref_in.description,
@@ -302,7 +314,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
 
     await db.commit()
     await _notify_trader()
-    return {"id": config.id}
+    return {"id": config.id, "name": config.name}
 
 
 @router.put("/{strategy_id}")
@@ -316,6 +328,8 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
     if not config:
         raise HTTPException(status_code=404, detail="Not found")
 
+    if body.name is not None:
+        config.name = body.name
     if body.strategy_class is not None:
         config.strategy_class = body.strategy_class
     if body.description is not None:
@@ -339,12 +353,15 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
             base_asset, quote_asset = asset_info[i]
             db.add(StrategyAsset(
                 strategy_id=strategy_id,
-                asset_num=i,
+                leg_num=i,
+                role=asset_in.role,
                 symbol=asset_in.symbol,
                 exchange=asset_in.exchange,
                 timeframe=asset_in.timeframe,
                 market_type=asset_in.market_type,
                 tick_process=asset_in.tick_process,
+                subscribe_depth=asset_in.subscribe_depth,
+                exchange_account_num=asset_in.exchange_account_num,
                 description=asset_in.description,
                 base_asset=base_asset,
                 quote_asset=quote_asset,

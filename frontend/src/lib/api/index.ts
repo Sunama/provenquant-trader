@@ -78,7 +78,7 @@ export const watchedAssets = {
 // ── Market Data ───────────────────────────────────────────
 
 export const marketData = {
-  klines: (params: { symbol: string; timeframe: string; exchange?: string; limit?: number }) => {
+  klines: (params: { symbol: string; timeframe: string; exchange?: string; market_type?: string; limit?: number }) => {
     const q = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
@@ -86,9 +86,9 @@ export const marketData = {
     );
     return api.get<Kline[]>(`/market-data/klines?${q}`);
   },
-  orderbook: (symbol: string, exchange = "binance") =>
+  orderbook: (symbol: string, exchange = "binance", market_type = "futures") =>
     api.get<{ bids: number[][]; asks: number[][]; time: number | null }>(
-      `/market-data/orderbook?symbol=${symbol}&exchange=${exchange}`
+      `/market-data/orderbook?symbol=${symbol}&exchange=${exchange}&market_type=${market_type}`
     ),
 };
 

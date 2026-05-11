@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import inspect
-import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
-import redis.asyncio as aioredis
+from app.services.data_fetcher import Subscription
 
-from app.core.settings import settings
-from app.services.data_fetcher import Subscription, TickData
+if TYPE_CHECKING:
+    from app.services.strategy_context import StrategyContext
+
+
+# ── Enums ─────────────────────────────────────────────────────────────────────
 
 
 class SignalAction(str, Enum):
@@ -29,24 +30,44 @@ class PriceMethod(str, Enum):
     LIMIT = "limit"
 
 
+class AmountMode(str, Enum):
+    """Controls how LegOrder.amount is interpreted by TradeExecuterProcess."""
+    PORTFOLIO_PCT_REALIZED = "portfolio_pct_realized"
+    """Fraction of cash balance (realized). Default — equivalent to old TradeSignal."""
+    PORTFOLIO_PCT_UNREALIZED = "portfolio_pct_unrealized"
+    """Fraction of total portfolio value including open positions (unrealized)."""
+    UNITS = "units"
+    """Exact number of contracts or coins to trade."""
+    RATIO_TO_LEG = "ratio_to_leg"
+    """Ratio relative to an open position on reference_leg (hedging / pair trading)."""
+
+
+# ── Data structures ────────────────────────────────────────────────────────────
+
+
 @dataclass
-class TradeSignal:
-    execute: SignalAction
-    asset_num: int          # 0-based index into strategy's StrategyAsset list
-    exchange_num: int       # 0-based index into strategy's ExchangeAccount list
-    market_type: str        # spot | futures | options
-    amount: float           # 0.0–1.0 fraction of available balance
-    price_method: PriceMethod = PriceMethod.MARKET
-    price: Optional[float] = None   # required when price_method=LIMIT
-    tp_pct: Optional[float] = None
-    sl_pct: Optional[float] = None
-    metadata: dict = field(default_factory=dict)
+class StrategyLeg:
+    """
+    Describes one instrument leg subscribed by a strategy.
+    Replaces the old StrategyAssetConfig; adds role and exchange_account_num.
+    """
+    leg_num: int               # 0-based index matching StrategyAsset.leg_num in DB
+    role: str                  # strategy-defined label, e.g. "primary", "hedge", "anchor"
+    symbol: str
+    exchange: str
+    market_type: str
+    timeframe: str
+    tick_process: bool
+    subscribe_depth: bool = False
+    base_asset: str = ""
+    quote_asset: str = ""
+    exchange_account_num: int = 0   # links to StrategyExchangeRef.exchange_num
 
 
 @dataclass
 class ParameterSchema:
     name: str
-    type: str               # bool|int|float|str
+    type: str               # bool | int | float | str
     default: Any
     min: Optional[float] = None
     max: Optional[float] = None
@@ -54,15 +75,84 @@ class ParameterSchema:
 
 
 @dataclass
-class StrategyAssetConfig:
-    asset_num: int
-    symbol: str
-    exchange: str
-    timeframe: str
-    market_type: str
-    tick_process: bool
-    base_asset: str = ""
-    quote_asset: str = ""
+class LegOrder:
+    """
+    One trade instruction for a single leg inside an ExecutionPlan.
+
+    amount semantics depend on amount_mode:
+      PORTFOLIO_PCT_REALIZED   — 0.0–1.0 fraction of cash balance
+      PORTFOLIO_PCT_UNREALIZED — 0.0–1.0 fraction of total portfolio value
+      UNITS                    — absolute quantity (contracts / coins)
+      RATIO_TO_LEG             — multiplier relative to reference_leg open position size
+    """
+    leg_num: int
+    action: SignalAction
+    amount: float
+    amount_mode: AmountMode = AmountMode.PORTFOLIO_PCT_REALIZED
+    reference_leg: Optional[int] = None    # required when amount_mode=RATIO_TO_LEG
+    price_method: PriceMethod = PriceMethod.MARKET
+    price: Optional[float] = None
+    tp_pct: Optional[float] = None
+    sl_pct: Optional[float] = None
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "leg_num": self.leg_num,
+            "action": self.action.value,
+            "amount": self.amount,
+            "amount_mode": self.amount_mode.value,
+            "reference_leg": self.reference_leg,
+            "price_method": self.price_method.value,
+            "price": self.price,
+            "tp_pct": self.tp_pct,
+            "sl_pct": self.sl_pct,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LegOrder":
+        return cls(
+            leg_num=int(d["leg_num"]),
+            action=SignalAction(d["action"]),
+            amount=float(d["amount"]),
+            amount_mode=AmountMode(d.get("amount_mode", AmountMode.PORTFOLIO_PCT_REALIZED.value)),
+            reference_leg=int(d["reference_leg"]) if d.get("reference_leg") is not None else None,
+            price_method=PriceMethod(d.get("price_method", PriceMethod.MARKET.value)),
+            price=float(d["price"]) if d.get("price") is not None else None,
+            tp_pct=float(d["tp_pct"]) if d.get("tp_pct") is not None else None,
+            sl_pct=float(d["sl_pct"]) if d.get("sl_pct") is not None else None,
+            metadata=d.get("metadata", {}),
+        )
+
+
+@dataclass
+class ExecutionPlan:
+    """
+    Return value of StrategyExecuter.execute().
+    Contains one or more LegOrders and an optional post-execution callback key.
+
+    on_complete: if set, TradeExecuterProcess publishes this key to 'executions:callbacks'
+    stream after all orders execute. Useful for arbitrage settlement flows.
+    """
+    orders: list[LegOrder]
+    on_complete: Optional[str] = None   # event key, e.g. "transfer_funds"
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "orders": [o.to_dict() for o in self.orders],
+            "on_complete": self.on_complete,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ExecutionPlan":
+        return cls(
+            orders=[LegOrder.from_dict(o) for o in d["orders"]],
+            on_complete=d.get("on_complete"),
+            metadata=d.get("metadata", {}),
+        )
 
 
 @dataclass
@@ -87,29 +177,32 @@ class IndicatorSeries:
         }
 
 
+# ── Abstract base ──────────────────────────────────────────────────────────────
+
+
 class StrategyExecuter(ABC):
     """
     Base class for all trading strategies.
 
-    Subclasses must define:
-      - id: unique string identifier (used for Redis race-condition locking)
-      - parameter_schema: list of ParameterSchema describing configurable params
-      - subscriptions: list of Subscription; set tick_process=True on the driving asset
-      - execute(tick, asset_num): core logic — return list[TradeSignal] (empty = no trade)
+    Subclasses must implement:
+      - id:               unique string identifier (used for Redis locks)
+      - parameter_schema: list[ParameterSchema] describing configurable params
+      - subscriptions:    list[Subscription]; set tick_process=True on driving legs
+      - execute(context): core logic — return ExecutionPlan or None (no trade)
 
-    Instances are NOT long-lived; StrategyExecuterManager spawns a fresh instance per
-    Celery task. Persistent state must live in Redis or Postgres.
+    Instances are NOT long-lived; a fresh instance is created per Celery task.
+    All persistent state must live in Redis (via context.redis) or Postgres.
     """
 
     def __init__(
         self,
         params: dict | None = None,
-        assets: list[StrategyAssetConfig] | None = None,
+        legs: list[StrategyLeg] | None = None,
         config_id: str = "",
     ) -> None:
         self.params: dict = params or {}
-        self.assets: list[StrategyAssetConfig] = assets or []
-        self.config_id: str = config_id   # DB StrategyConfig.id — used for Redis state keys
+        self.legs: list[StrategyLeg] = legs or []
+        self.config_id: str = config_id
 
     @property
     @abstractmethod
@@ -124,46 +217,13 @@ class StrategyExecuter(ABC):
     def subscriptions(self) -> list[Subscription]: ...
 
     @abstractmethod
-    async def execute(self, tick: TickData, asset_num: int) -> list[TradeSignal]:
+    async def execute(self, context: "StrategyContext") -> Optional[ExecutionPlan]:
         """
-        Process one closed bar and return a list of trade signals.
-        asset_num identifies which subscribed asset triggered this call.
-        Return an empty list to take no action.
+        Process one closed bar and return an ExecutionPlan or None.
+        All market data access goes through context.redis / context.db / context.pq.
         """
         ...
 
     def indicators(self, klines: list) -> list[IndicatorSeries]:
-        """Override to return indicator series for chart display.
-        klines = list[Tick] from InternalDataFetcher.
-        """
+        """Override to return indicator series for chart display."""
         return []
-
-    # ── Persistent state helpers (Redis) ─────────────────────────
-
-    async def get_status(self) -> str:
-        """Return current strategy status from Redis (default: 'neutral')."""
-        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
-            return await r.get(f"strategy:status:{self.config_id}") or "neutral"
-
-    async def set_status(self, status: str) -> None:
-        """Persist strategy status to Redis."""
-        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
-            await r.set(f"strategy:status:{self.config_id}", status)
-
-    async def get_recent_closes(self, symbol: str, timeframe: str, limit: int) -> list[float]:
-        """Fetch recent close prices from Redis tick buffer (newest first → reversed for chronological)."""
-        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
-            raw_list = await r.lrange(f"tick:{symbol}:{timeframe}", 0, limit - 1)
-        closes: list[float] = []
-        for raw in reversed(raw_list):
-            try:
-                closes.append(float(json.loads(raw)["close"]))
-            except Exception:
-                pass
-        return closes
-
-    @classmethod
-    def _is_legacy(cls) -> bool:
-        """Detect old-style execute(tick) -> TradeSignal | None signature for shim."""
-        sig = inspect.signature(cls.execute)
-        return "asset_num" not in sig.parameters

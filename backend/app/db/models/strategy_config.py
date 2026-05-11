@@ -1,3 +1,5 @@
+import uuid
+
 import sqlalchemy as sa
 from app.db.base_class import Base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,11 +13,15 @@ if TYPE_CHECKING:
 class StrategyConfig(Base):
     """
     Persisted configuration for an active strategy instance.
+    id is a UUID generated automatically — users identify strategies by name.
     Assets and exchange accounts are stored in related tables (strategy_assets, strategy_exchange_refs).
     """
     __tablename__ = "strategy_configs"
 
-    id: Mapped[str] = mapped_column(sa.String, primary_key=True)
+    id: Mapped[str] = mapped_column(
+        sa.String, primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    name: Mapped[str] = mapped_column(sa.String(200), nullable=False, unique=True)
     strategy_class: Mapped[str] = mapped_column(sa.String, nullable=False)
     enabled: Mapped[bool] = mapped_column(sa.Boolean, default=True)
     is_paper: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default="true")
@@ -32,7 +38,7 @@ class StrategyConfig(Base):
 
     assets: Mapped[list["StrategyAsset"]] = relationship(
         "StrategyAsset", back_populates="strategy", cascade="all, delete-orphan",
-        order_by="StrategyAsset.asset_num",
+        order_by="StrategyAsset.leg_num",
     )
     exchange_refs: Mapped[list["StrategyExchangeRef"]] = relationship(
         "StrategyExchangeRef", back_populates="strategy", cascade="all, delete-orphan",
@@ -40,4 +46,4 @@ class StrategyConfig(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<StrategyConfig(id={self.id}, class={self.strategy_class})>"
+        return f"<StrategyConfig(id={self.id}, name={self.name}, class={self.strategy_class})>"

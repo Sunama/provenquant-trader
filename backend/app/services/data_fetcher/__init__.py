@@ -21,6 +21,7 @@ class Subscription:
     exchange: str = "binance"
     market_type: str = "futures"
     tick_process: bool = False      # True = receiving this tick triggers strategy execution
+    subscribe_depth: bool = False   # True = subscribe to order book depth stream
     description: str = ""           # human-readable role of this asset in the strategy
 
 
@@ -34,10 +35,11 @@ class TickData:
     low: float
     close: float
     volume: float
+    market_type: str = "futures"
     is_closed: bool = True  # False = live update for the currently forming bar
 
     def redis_key(self) -> str:
-        return f"tick:{self.symbol}:{self.timeframe}"
+        return f"tick:{self.symbol}:{self.timeframe}:{self.market_type}"
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +51,7 @@ class TickData:
             "low": self.low,
             "close": self.close,
             "volume": self.volume,
+            "market_type": self.market_type,
             "is_closed": self.is_closed,
         }
 
@@ -145,6 +148,7 @@ class AggTradeData:
     price: float
     quantity: float
     is_buyer_maker: bool
+    market_type: str = "futures"
 
     def to_dict(self) -> dict:
         return {
@@ -154,6 +158,7 @@ class AggTradeData:
             "price": self.price,
             "quantity": self.quantity,
             "is_buyer_maker": int(self.is_buyer_maker),
+            "market_type": self.market_type,
         }
 
 
@@ -164,6 +169,10 @@ class OrderBookData:
     time: int           # Unix ms
     bids: list          # [[price, qty], ...]
     asks: list          # [[price, qty], ...]
+    market_type: str = "futures"
+
+    def redis_key(self) -> str:
+        return f"orderbook:{self.symbol}:{self.exchange}:{self.market_type}"
 
     def redis_key(self) -> str:
         return f"orderbook:{self.symbol}:{self.exchange}"

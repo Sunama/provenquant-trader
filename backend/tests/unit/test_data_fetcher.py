@@ -39,7 +39,7 @@ def _fetcher(mock_redis) -> _StubFetcher:
 
 def _tick(close: float = 50_000.0) -> TickData:
     return TickData(
-        asset_slug="btcusdt", timeframe="1m",
+        symbol="btcusdt", timeframe="1m",
         time=1_700_000_000_000,
         open=close, high=close, low=close, close=close, volume=10.0,
     )
@@ -94,11 +94,11 @@ async def test_emit_with_no_redis_does_not_crash():
 @pytest.mark.asyncio
 async def test_emit_uses_correct_redis_key(mock_redis):
     f = _fetcher(mock_redis)
-    tick = TickData(asset_slug="ethusdt", timeframe="5m",
+    tick = TickData(symbol="ethusdt", timeframe="5m",
                     time=0, open=1, high=1, low=1, close=1, volume=1)
     await f._emit(tick)
     key = mock_redis.lpush.call_args.args[0]
-    assert key == "tick:ethusdt:5m"
+    assert key == "tick:ethusdt:5m:futures"
 
 
 # ── _emit_funding_rate() ──────────────────────────────────────────────
@@ -106,7 +106,7 @@ async def test_emit_uses_correct_redis_key(mock_redis):
 @pytest.mark.asyncio
 async def test_emit_funding_rate_stores_to_redis_set(mock_redis):
     f = _fetcher(mock_redis)
-    data = FundingRateData(asset_slug="btcusdt", exchange="binance", time=0, rate=0.0001)
+    data = FundingRateData(symbol="btcusdt", exchange="binance", time=0, rate=0.0001)
     await f._emit_funding_rate(data)
     mock_redis.set.assert_called_once()
     key = mock_redis.set.call_args.args[0]
@@ -118,7 +118,7 @@ async def test_emit_funding_rate_invokes_callbacks(mock_redis):
     f = _fetcher(mock_redis)
     cb = AsyncMock()
     f.add_funding_callback(cb)
-    data = FundingRateData(asset_slug="btcusdt", exchange="binance", time=0, rate=0.0001)
+    data = FundingRateData(symbol="btcusdt", exchange="binance", time=0, rate=0.0001)
     await f._emit_funding_rate(data)
     cb.assert_awaited_once_with(data)
 
@@ -128,7 +128,7 @@ async def test_emit_funding_rate_invokes_callbacks(mock_redis):
 @pytest.mark.asyncio
 async def test_emit_mark_price_pushes_to_list(mock_redis):
     f = _fetcher(mock_redis)
-    data = MarkPriceData(asset_slug="btcusdt", exchange="binance",
+    data = MarkPriceData(symbol="btcusdt", exchange="binance",
                          market_type="futures", time=0, price=50_000.0)
     await f._emit_mark_price(data)
     mock_redis.lpush.assert_called_once()
@@ -137,7 +137,7 @@ async def test_emit_mark_price_pushes_to_list(mock_redis):
 @pytest.mark.asyncio
 async def test_emit_mark_price_uses_correct_key(mock_redis):
     f = _fetcher(mock_redis)
-    data = MarkPriceData(asset_slug="btcusdt", exchange="binance",
+    data = MarkPriceData(symbol="btcusdt", exchange="binance",
                          market_type="futures", time=0, price=50_000.0)
     await f._emit_mark_price(data)
     key = mock_redis.lpush.call_args.args[0]
@@ -149,7 +149,7 @@ async def test_emit_mark_price_invokes_callbacks(mock_redis):
     f = _fetcher(mock_redis)
     cb = AsyncMock()
     f.add_mark_price_callback(cb)
-    data = MarkPriceData(asset_slug="btcusdt", exchange="binance",
+    data = MarkPriceData(symbol="btcusdt", exchange="binance",
                          market_type="futures", time=0, price=50_000.0)
     await f._emit_mark_price(data)
     cb.assert_awaited_once_with(data)
@@ -160,7 +160,7 @@ async def test_emit_mark_price_invokes_callbacks(mock_redis):
 @pytest.mark.asyncio
 async def test_emit_liquidation_uses_redis_stream(mock_redis):
     f = _fetcher(mock_redis)
-    data = LiquidationData(asset_slug="btcusdt", exchange="binance",
+    data = LiquidationData(symbol="btcusdt", exchange="binance",
                            time=0, side="long_liq", price=50_000.0, quantity=1.0)
     await f._emit_liquidation(data)
     mock_redis.xadd.assert_called_once()
@@ -173,7 +173,7 @@ async def test_emit_liquidation_invokes_callbacks(mock_redis):
     f = _fetcher(mock_redis)
     cb = AsyncMock()
     f.add_liquidation_callback(cb)
-    data = LiquidationData(asset_slug="btcusdt", exchange="binance",
+    data = LiquidationData(symbol="btcusdt", exchange="binance",
                            time=0, side="long_liq", price=50_000.0, quantity=1.0)
     await f._emit_liquidation(data)
     cb.assert_awaited_once_with(data)
@@ -184,7 +184,7 @@ async def test_emit_liquidation_invokes_callbacks(mock_redis):
 @pytest.mark.asyncio
 async def test_emit_agg_trade_uses_redis_stream(mock_redis):
     f = _fetcher(mock_redis)
-    data = AggTradeData(asset_slug="btcusdt", exchange="binance",
+    data = AggTradeData(symbol="btcusdt", exchange="binance",
                         time=0, price=50_000.0, quantity=0.01, is_buyer_maker=False)
     await f._emit_agg_trade(data)
     stream_key = mock_redis.xadd.call_args.args[0]
@@ -196,7 +196,7 @@ async def test_emit_agg_trade_invokes_callbacks(mock_redis):
     f = _fetcher(mock_redis)
     cb = AsyncMock()
     f.add_agg_trade_callback(cb)
-    data = AggTradeData(asset_slug="btcusdt", exchange="binance",
+    data = AggTradeData(symbol="btcusdt", exchange="binance",
                         time=0, price=50_000.0, quantity=0.01, is_buyer_maker=True)
     await f._emit_agg_trade(data)
     cb.assert_awaited_once_with(data)
@@ -207,7 +207,7 @@ async def test_emit_agg_trade_invokes_callbacks(mock_redis):
 @pytest.mark.asyncio
 async def test_emit_orderbook_writes_redis_set(mock_redis):
     f = _fetcher(mock_redis)
-    data = OrderBookData(asset_slug="btcusdt", exchange="binance",
+    data = OrderBookData(symbol="btcusdt", exchange="binance",
                          time=0, bids=[[50_000, 1]], asks=[[50_001, 1]])
     await f._emit_orderbook(data)
     mock_redis.set.assert_called_once()
@@ -222,7 +222,7 @@ async def test_emit_orderbook_no_callbacks_fired(mock_redis):
     fired = []
     f.add_callback(AsyncMock(side_effect=lambda t: fired.append("tick")))
     f.add_funding_callback(AsyncMock(side_effect=lambda d: fired.append("funding")))
-    data = OrderBookData(asset_slug="btcusdt", exchange="binance",
+    data = OrderBookData(symbol="btcusdt", exchange="binance",
                          time=0, bids=[], asks=[])
     await f._emit_orderbook(data)
     assert fired == []
