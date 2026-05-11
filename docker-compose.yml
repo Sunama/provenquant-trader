@@ -39,9 +39,12 @@ services:
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
-    command: ["celery", "-A", "app.core.celery_app", "worker", "-Q", "default,low,medium,high", "--loglevel=INFO"]
+    command: ["watchfiles", "--filter", "python", "celery -A app.core.celery_app worker -Q default,low,medium,high,strategy --loglevel=INFO", "."]
     volumes:
       - ./backend/app:/backend/app
+      - ./backend/strategies:/backend/strategies
+    environment:
+      PYTHONPATH: /backend
     env_file: .env
     depends_on:
       migrate:
@@ -55,9 +58,11 @@ services:
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
-    command: ["celery", "-A", "app.core.celery_app", "beat", "--loglevel=INFO"]
+    command: ["watchfiles", "--filter", "python", "celery -A app.core.celery_app beat --loglevel=INFO", "."]
     volumes:
       - ./backend/app:/backend/app
+    environment:
+      PYTHONPATH: /backend
     env_file: .env
     depends_on:
       migrate:

@@ -39,8 +39,6 @@ class _ConcreteStrategy(StrategyExecuter):
 # ── SignalAction enum ─────────────────────────────────────────────────
 
 def test_signal_action_values():
-    assert SignalAction.BUY == "buy"
-    assert SignalAction.SELL == "sell"
     assert SignalAction.OPEN_LONG == "open_long"
     assert SignalAction.CLOSE_LONG == "close_long"
     assert SignalAction.OPEN_SHORT == "open_short"

@@ -31,13 +31,11 @@ _CONSUMER_NAME = f"worker-{os.getpid()}"
 _MAX_SIGNAL_AGE_SECONDS = 30
 _STREAM_MAXLEN = 10000
 
-_OPENING_ACTIONS = {SignalAction.OPEN_LONG, SignalAction.OPEN_SHORT, SignalAction.BUY}
-_CLOSING_ACTIONS = {SignalAction.CLOSE_LONG, SignalAction.CLOSE_SHORT, SignalAction.SELL}
+_OPENING_ACTIONS = {SignalAction.OPEN_LONG, SignalAction.OPEN_SHORT}
+_CLOSING_ACTIONS = {SignalAction.CLOSE_LONG, SignalAction.CLOSE_SHORT}
 _ACTION_TO_SIDE = {
     SignalAction.OPEN_LONG: "long",
     SignalAction.OPEN_SHORT: "short",
-    SignalAction.BUY: "long",
-    SignalAction.SELL: "short",
     SignalAction.CLOSE_LONG: "long",
     SignalAction.CLOSE_SHORT: "short",
 }

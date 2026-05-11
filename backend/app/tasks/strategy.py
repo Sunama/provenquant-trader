@@ -33,10 +33,12 @@ def run_strategy(
     ExecutionPlan is published to Redis Streams for TradeExecuterProcess to consume.
     Releases the Redis lock on completion (success or failure).
     """
+    logger.info(f"Starting run_strategy task for config_id={config_id} with strategy {strategy_class_path}")
     async def run() -> str:
         r = await aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         lock_key = f"strategy_lock:{config_id}"
         try:
+            logger.info(f"Attempting to run strategy {config_id} with class {strategy_class_path}")
             context = StrategyContext.from_dict(context_dict)
 
             module_path, class_name = strategy_class_path.rsplit(".", 1)

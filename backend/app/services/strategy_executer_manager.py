@@ -21,7 +21,7 @@ from app.services.strategy_context import StrategyContext
 
 logger = logging.getLogger(__name__)
 
-_LOCK_TIMEOUT = 60  # seconds — max allowed execution time per strategy tick
+_LOCK_TIMEOUT = 10  # seconds — max allowed execution time per strategy tick
 
 
 @dataclass

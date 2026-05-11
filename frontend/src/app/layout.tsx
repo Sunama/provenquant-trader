@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { WebSocketStatus } from "@/components/layout/WebSocketStatus";
+import { LayoutShell } from "@/components/layout/LayoutShell";
 import { QueryProvider } from "@/providers/QueryProvider";
 import { WebSocketProvider } from "@/providers/WebSocketProvider";
 import { Toaster } from "sonner";
@@ -20,15 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={inter.className}>
         <QueryProvider>
           <WebSocketProvider>
-            <div className="flex h-screen overflow-hidden">
-              <Sidebar />
-              <div className="flex flex-1 flex-col overflow-hidden">
-                <header className="flex h-12 items-center justify-end border-b px-4">
-                  <WebSocketStatus />
-                </header>
-                <main className="flex-1 overflow-auto p-6">{children}</main>
-              </div>
-            </div>
+            <LayoutShell>{children}</LayoutShell>
             <Toaster richColors position="top-right" />
           </WebSocketProvider>
         </QueryProvider>

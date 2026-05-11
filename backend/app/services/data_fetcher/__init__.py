@@ -281,13 +281,11 @@ class DataFetcher(ABC):
             # Always broadcast for WebSocket relay (is_closed flag included in payload)
             await self._redis.publish("ticks:broadcast", payload)
 
-        # Only invoke strategy callbacks for closed bars
-        if tick.is_closed:
-            for cb in self._tick_callbacks:
-                try:
-                    await cb(tick)
-                except Exception:
-                    logger.exception("Tick callback raised")
+        for cb in self._tick_callbacks:
+            try:
+                await cb(tick)
+            except Exception:
+                logger.exception("Tick callback raised")
 
     async def _emit_funding_rate(self, data: FundingRateData) -> None:
         if self._redis:

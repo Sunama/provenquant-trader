@@ -15,10 +15,6 @@ if TYPE_CHECKING:
 
 
 class SignalAction(str, Enum):
-    # Spot & Options
-    BUY = "buy"
-    SELL = "sell"
-    # Futures
     OPEN_LONG = "open_long"
     CLOSE_LONG = "close_long"
     OPEN_SHORT = "open_short"
