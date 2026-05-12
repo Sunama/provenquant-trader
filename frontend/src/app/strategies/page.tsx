@@ -31,14 +31,17 @@ function StrategyCard({ strategy }: { strategy: Strategy }) {
     <div className="rounded-lg border bg-card p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span
               className={cn(
-                "h-2 w-2 rounded-full",
+                "h-2 w-2 rounded-full flex-shrink-0",
                 strategy.enabled ? "bg-green-500" : "bg-muted-foreground"
               )}
             />
             <span className="font-semibold">{strategy.name}</span>
+            <span className={cn("text-xs rounded px-1.5 py-0.5 font-medium", strategy.is_paper ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400")}>
+              {strategy.is_paper ? "paper" : "live"}
+            </span>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground font-mono">{strategy.strategy_class}</p>
           {strategy.description && (

@@ -7,10 +7,12 @@ from typing import Optional
 
 from sqlalchemy import select, desc
 
+from app.db.models.position import Position
 from app.db.models.tick import Tick
 from app.db.models.funding_rate import FundingRate
 from app.db.models.mark_price import MarkPrice
 from app.db.models.open_interest import OpenInterest
+from app.db.models.trade_history import TradeHistory
 from app.db.session import SessionLocal
 from app.services.data_fetcher import OrderBookData
 
@@ -111,6 +113,43 @@ class InternalDataFetcher:
             )
             rows = result.scalars().all()
         return list(reversed(rows))
+
+    async def get_open_positions(
+        self,
+        strategy_id: str,
+        symbol: Optional[str] = None,
+    ) -> list[Position]:
+        async with SessionLocal() as session:
+            stmt = select(Position).where(
+                Position.strategy_id == strategy_id,
+                Position.is_open == True,  # noqa: E712
+            )
+            if symbol:
+                stmt = stmt.where(Position.symbol == symbol.upper())
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def get_trade_history(
+        self,
+        config_id: str,
+        symbol: Optional[str] = None,
+        trade_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[TradeHistory]:
+        """Newest-first so index 0 is always the most recent trade."""
+        async with SessionLocal() as session:
+            stmt = (
+                select(TradeHistory)
+                .where(TradeHistory.strategy_id == config_id)
+                .order_by(desc(TradeHistory.occurred_at))
+                .limit(limit)
+            )
+            if symbol:
+                stmt = stmt.where(TradeHistory.symbol == symbol)
+            if trade_type:
+                stmt = stmt.where(TradeHistory.trade_type == trade_type)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
 
     async def get_orderbook(
         self,

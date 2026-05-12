@@ -58,6 +58,7 @@ class StrategyLeg:
     base_asset: str = ""
     quote_asset: str = ""
     exchange_account_num: int = 0   # links to StrategyExchangeRef.exchange_num
+    transaction_fee: float = 0.0002  # fractional fee per trade (e.g. 0.0002 = 0.02%)
 
 
 @dataclass

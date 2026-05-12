@@ -114,6 +114,7 @@ class StrategyExecuterManager:
                         base_asset=a.base_asset or "",
                         quote_asset=a.quote_asset or "",
                         exchange_account_num=a.exchange_account_num,
+                        transaction_fee=a.transaction_fee,
                     )
                     for a in sorted(config.assets, key=lambda x: x.leg_num)
                 ]

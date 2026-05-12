@@ -34,6 +34,9 @@ class StrategyAsset(Base):
     base_asset: Mapped[Optional[str]] = mapped_column(sa.String(20), nullable=True)
     quote_asset: Mapped[Optional[str]] = mapped_column(sa.String(20), nullable=True)
     exchange_account_num: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    transaction_fee: Mapped[float] = mapped_column(
+        sa.Float, nullable=False, server_default="0.0002", default=0.0002
+    )
 
     strategy: Mapped["StrategyConfig"] = relationship("StrategyConfig", back_populates="assets")
 

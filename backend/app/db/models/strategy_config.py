@@ -29,6 +29,7 @@ class StrategyConfig(Base):
     params: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
     parameters_schema: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
     signal_definitions: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
+    base_asset: Mapped[Optional[str]] = mapped_column(sa.String(20), nullable=True)
     created_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )

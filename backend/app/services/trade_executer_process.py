@@ -127,7 +127,7 @@ class TradeExecuterProcess:
                 await self._redis.xack(_STREAM_KEY, _GROUP_NAME, msg_id)
                 return
 
-            adapter = await self._resolve_adapter(config_id)
+            adapter, account_base = await self._resolve_adapter(config_id)
             executed_count = 0
 
             for order in orders:
@@ -136,7 +136,7 @@ class TradeExecuterProcess:
                     logger.warning(f"Could not resolve leg_num={order.leg_num} for config={config_id}")
                     continue
 
-                symbol, timeframe, market_type, base_asset, quote_asset = leg_meta
+                symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee = leg_meta
                 price = order.price if order.price else tick_close
 
                 await self._execute_order(
@@ -148,6 +148,8 @@ class TradeExecuterProcess:
                     base_asset=base_asset,
                     quote_asset=quote_asset,
                     signal_price=price,
+                    transaction_fee=transaction_fee,
+                    account_base=account_base,
                 )
                 executed_count += 1
 
@@ -170,8 +172,8 @@ class TradeExecuterProcess:
             logger.exception(f"Error handling signal {msg_id}")
             # Do not ack — will be re-delivered (at-least-once)
 
-    async def _resolve_leg(self, config_id: str, leg_num: int) -> tuple[str, str, str, str, str] | None:
-        """Returns (symbol, timeframe, market_type, base_asset, quote_asset) or None."""
+    async def _resolve_leg(self, config_id: str, leg_num: int) -> tuple[str, str, str, str, str, float] | None:
+        """Returns (symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee) or None."""
         async with SessionLocal() as session:
             result = await session.execute(
                 select(StrategyAsset).where(
@@ -187,19 +189,19 @@ class TradeExecuterProcess:
                 asset.market_type,
                 asset.base_asset or "",
                 asset.quote_asset or "",
+                asset.transaction_fee,
             )
         return None
 
-    async def _resolve_adapter(self, config_id: str) -> TradeAdapter:
+    async def _resolve_adapter(self, config_id: str) -> tuple[TradeAdapter, str]:
         async with SessionLocal() as session:
             config = await session.get(StrategyConfig, config_id)
+        account_base = (config.base_asset or "USDT") if config else "USDT"
         if not config or config.is_paper:
-            initial_assets = {}
-            if config and config.params:
-                initial_assets = config.params.get("initial_assets", {})
-            return PaperTradeAdapter(config_id=config_id, initial_assets=initial_assets)
+            initial_assets = config.params.get("initial_assets", {}) if config and config.params else {}
+            return PaperTradeAdapter(config_id=config_id, initial_assets=initial_assets), account_base
         logger.warning(f"Live adapter not implemented for config={config_id}, falling back to paper")
-        return PaperTradeAdapter(config_id=config_id)
+        return PaperTradeAdapter(config_id=config_id), account_base
 
     async def _compute_size(
         self,
@@ -208,6 +210,7 @@ class TradeExecuterProcess:
         config_id: str,
         symbol: str,
         price: float,
+        account_base: str = "USDT",
     ) -> float:
         """Convert LegOrder.amount + AmountMode into a concrete size (number of units)."""
         if order.amount_mode == AmountMode.UNITS:
@@ -228,15 +231,15 @@ class TradeExecuterProcess:
 
         if order.amount_mode == AmountMode.PORTFOLIO_PCT_UNREALIZED:
             # Total portfolio = cash + unrealized value of all open positions
-            balance = await adapter.get_balance()
+            balance = await adapter.get_asset_balance(account_base)
             # PaperTradeAdapter doesn't expose all open positions; approximate with balance
             # Real implementation would iterate open positions and sum notional value
             portfolio_value = balance  # TODO: add unrealized position values
             cost = portfolio_value * order.amount
             return cost / price if price else 0.0
 
-        # Default: PORTFOLIO_PCT_REALIZED — fraction of cash balance
-        balance = await adapter.get_balance()
+        # Default: PORTFOLIO_PCT_REALIZED — fraction of account base asset balance
+        balance = await adapter.get_asset_balance(account_base)
         cost = balance * order.amount
         return cost / price if price else 0.0
 
@@ -250,6 +253,8 @@ class TradeExecuterProcess:
         base_asset: str,
         quote_asset: str,
         signal_price: float,
+        transaction_fee: float = 0.0,
+        account_base: str = "USDT",
     ) -> None:
         execute = order.action
 
@@ -259,7 +264,7 @@ class TradeExecuterProcess:
             if current:
                 await self._close_position(
                     adapter, strategy_id, symbol, side, signal_price, "signal",
-                    base_asset, quote_asset, market_type,
+                    base_asset, quote_asset, market_type, transaction_fee,
                 )
             else:
                 logger.debug(f"CLOSE signal for {symbol} but no open position — ignoring")
@@ -270,7 +275,7 @@ class TradeExecuterProcess:
         if current and current.side != new_side:
             await self._close_position(
                 adapter, strategy_id, symbol, current.side, signal_price, "signal",
-                base_asset, quote_asset, market_type,
+                base_asset, quote_asset, market_type, transaction_fee,
             )
         elif current and current.side == new_side:
             logger.debug(f"Already {new_side} on {symbol}, skipping entry")
@@ -285,6 +290,8 @@ class TradeExecuterProcess:
             signal_price=signal_price,
             base_asset=base_asset,
             quote_asset=quote_asset,
+            transaction_fee=transaction_fee,
+            account_base=account_base,
         )
 
     async def _open_position(
@@ -297,9 +304,11 @@ class TradeExecuterProcess:
         signal_price: float,
         base_asset: str,
         quote_asset: str,
+        transaction_fee: float = 0.0,
+        account_base: str = "USDT",
     ) -> None:
         entry_price = signal_price or 1.0
-        size = await self._compute_size(order, adapter, strategy_id, symbol, entry_price)
+        size = await self._compute_size(order, adapter, strategy_id, symbol, entry_price, account_base)
         if size <= 0:
             logger.warning(f"Computed size=0 for {symbol}, skipping open")
             return
@@ -324,6 +333,7 @@ class TradeExecuterProcess:
         )
 
         cost = result.size * result.price
+        fee = cost * transaction_fee
         async with SessionLocal() as db:
             pos = Position(
                 strategy_id=strategy_id,
@@ -348,7 +358,7 @@ class TradeExecuterProcess:
                 bought_qty=result.size if is_long else cost,
                 sold_qty=cost if is_long else result.size,
                 exchange_rate=result.price,
-                fee=0.0,
+                fee=fee,
                 fee_asset=quote_asset,
                 exchange="binance",
                 market_type=market_type,
@@ -379,6 +389,7 @@ class TradeExecuterProcess:
         base_asset: str,
         quote_asset: str,
         market_type: str = "futures",
+        transaction_fee: float = 0.0,
     ) -> None:
         result = await adapter.close_position(symbol, side, price or 0, reason)
 
@@ -402,10 +413,10 @@ class TradeExecuterProcess:
                 row.is_open = False
 
                 is_long = side == "long"
-                if is_long:
-                    row.pnl = (result.price - row.entry_price) * row.size
-                else:
-                    row.pnl = (row.entry_price - result.price) * row.size
+                gross_pnl = (result.price - row.entry_price) * row.size if is_long else (row.entry_price - result.price) * row.size
+                close_cost = result.size * result.price
+                fee = close_cost * transaction_fee
+                row.pnl = gross_pnl - fee
                 row.pnl_pct = row.pnl / (row.entry_price * row.size) if row.entry_price and row.size else 0
 
                 close_action = SignalAction.CLOSE_LONG if is_long else SignalAction.CLOSE_SHORT
@@ -418,10 +429,10 @@ class TradeExecuterProcess:
                     quote_asset=quote_asset,
                     bought_asset=quote_asset if is_long else base_asset,
                     sold_asset=base_asset if is_long else quote_asset,
-                    bought_qty=result.size * result.price if is_long else result.size,
-                    sold_qty=result.size if is_long else result.size * result.price,
+                    bought_qty=close_cost if is_long else result.size,
+                    sold_qty=result.size if is_long else close_cost,
                     exchange_rate=result.price,
-                    fee=0.0,
+                    fee=fee,
                     fee_asset=quote_asset,
                     exchange="binance",
                     market_type=market_type,

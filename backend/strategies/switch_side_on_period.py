@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.services.data_fetcher import Subscription
@@ -26,7 +27,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
     @property
     def parameter_schema(self) -> list[ParameterSchema]:
         return [
-            ParameterSchema(name="period", type="int", default=500, min=250, max=1000, description="Period between side switch"),
+            ParameterSchema(name="period", type="int", default=10, min=1, max=600, description="Period between side switch (seconds)"),
         ]
 
     @property
@@ -50,15 +51,19 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
     async def execute(self, context: StrategyContext) -> Optional[ExecutionPlan]:
         tick = context.tick
         leg_num = context.leg_num
+        period: int = int(self.params.get("period", 10))
 
-        period: int = int(self.params.get("period", 500))
-        
-        status = await context.redis.get_status()
-        
-        if status is None or status == "neutral" or status == "short":
-            await context.redis.set_status("long")
-            
-            # No status yet, open long
+        leg = context.get_leg(leg_num)
+        fee_rate: float = leg.transaction_fee if leg else 0.0002
+
+        history = await context.db.get_trade_history(
+            context.config_id,
+            symbol=tick.symbol,
+            limit=1,
+        )
+
+        if not history:
+            # No trades yet — open long to start
             return ExecutionPlan(orders=[
                 LegOrder(
                     leg_num=leg_num,
@@ -68,9 +73,27 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     price_method=PriceMethod.MARKET,
                 )
             ])
-        elif status == "long":
-            await context.redis.set_status("short")
-            
+
+        last_trade = history[0]
+        tick_dt = datetime.fromtimestamp(tick.time / 1000, tz=timezone.utc)
+        elapsed_seconds = (tick_dt - last_trade.occurred_at).total_seconds()
+        if elapsed_seconds < period:
+            return None
+
+        # Guard: only switch if unrealized PnL covers the round-trip fee cost (close + reopen)
+        open_positions = await context.db.get_open_positions(context.config_id, symbol=tick.symbol)
+        if open_positions:
+            pos = open_positions[0]
+            if pos.side == "long":
+                unrealized_pnl = (tick.close - pos.entry_price) * pos.size
+            else:
+                unrealized_pnl = (pos.entry_price - tick.close) * pos.size
+            switching_cost = pos.entry_price * pos.size * fee_rate * 2
+            if unrealized_pnl <= switching_cost:
+                return None
+
+        # Switch side based on the last trade type
+        if last_trade.trade_type in ("open_long", "close_short"):
             return ExecutionPlan(orders=[
                 LegOrder(
                     leg_num=leg_num,
@@ -85,7 +108,22 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     amount=0.1,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
-                )
+                ),
             ])
-
-        return None
+        else:  # open_short or close_long
+            return ExecutionPlan(orders=[
+                LegOrder(
+                    leg_num=leg_num,
+                    action=SignalAction.CLOSE_SHORT,
+                    amount=0.1,
+                    amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+                    price_method=PriceMethod.MARKET,
+                ),
+                LegOrder(
+                    leg_num=leg_num,
+                    action=SignalAction.OPEN_LONG,
+                    amount=0.1,
+                    amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+                    price_method=PriceMethod.MARKET,
+                ),
+            ])

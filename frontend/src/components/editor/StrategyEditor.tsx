@@ -105,6 +105,7 @@ export function StrategyEditor({ initial }: Props) {
 
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [baseAsset, setBaseAsset] = useState(initial?.base_asset ?? "");
   const [classPath, setClassPath] = useState(initial?.strategy_class ?? "");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [isPaper, setIsPaper] = useState(initial?.is_paper ?? true);
@@ -154,6 +155,7 @@ export function StrategyEditor({ initial }: Props) {
       description,
       enabled,
       is_paper: isPaper,
+      base_asset: baseAsset || null,
       params,
       parameters_schema: schema?.parameter_schema,
       assets: assets.map((a, i) => ({ ...a, leg_num: i })),
@@ -204,6 +206,7 @@ export function StrategyEditor({ initial }: Props) {
                         role: s.role ?? "primary",
                         subscribe_depth: s.subscribe_depth ?? false,
                         exchange_account_num: 0,
+                        transaction_fee: 0.0002,
                       }))
                     );
                   }
@@ -228,6 +231,16 @@ export function StrategyEditor({ initial }: Props) {
             rows={2}
             className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
+        </div>
+        <div className="sm:max-w-xs">
+          <label className="block text-xs text-muted-foreground mb-1">Account Base Asset</label>
+          <input
+            value={baseAsset}
+            onChange={(e) => setBaseAsset(e.target.value.toUpperCase())}
+            placeholder="USDT"
+            className="w-full rounded-md border px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <p className="mt-0.5 text-xs text-muted-foreground">Asset used for percentage-based position sizing (default: USDT)</p>
         </div>
         <div className="flex items-center gap-6">
           <label className="flex items-center gap-2">
@@ -287,7 +300,7 @@ export function StrategyEditor({ initial }: Props) {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Assets</h2>
           <button
             type="button"
-            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0, role: "primary", subscribe_depth: false, exchange_account_num: 0 }])}
+            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0, role: "primary", subscribe_depth: false, exchange_account_num: 0, transaction_fee: 0.0002 }])}
             className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
           >
             <Plus className="h-3 w-3" />
@@ -377,6 +390,19 @@ export function StrategyEditor({ initial }: Props) {
                     />
                   </div>
                 )}
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">
+                    Transaction Fee <span className="text-muted-foreground/60">(e.g. 0.0002 = 0.02%)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.00001}
+                    value={asset.transaction_fee ?? 0.0002}
+                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, transaction_fee: parseFloat(e.target.value) || 0 } : a))}
+                    className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
               </div>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 text-sm">

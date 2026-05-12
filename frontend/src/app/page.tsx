@@ -1,12 +1,50 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { positions, strategies, trades } from "@/lib/api";
-import { useLiveDataStore } from "@/lib/store/useLiveDataStore";
+import { positions, strategies } from "@/lib/api";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { RecentSignalsTable } from "@/components/dashboard/RecentSignalsTable";
 import { LivePriceChart } from "@/components/dashboard/LivePriceChart";
 import { formatPnl } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import type { Strategy } from "@/lib/types";
+
+function StrategyOverviewRow({ strategy }: { strategy: Strategy }) {
+  const { data: stats } = useQuery({
+    queryKey: ["position-stats", strategy.id],
+    queryFn: () => positions.stats(strategy.id),
+  });
+
+  return (
+    <tr className="border-b last:border-0 hover:bg-accent/30 text-sm">
+      <td className="py-2.5 px-3">
+        <Link href={`/strategies/${strategy.id}`} className="flex items-center gap-2 hover:underline">
+          <span className={cn("h-2 w-2 rounded-full flex-shrink-0", strategy.enabled ? "bg-green-500" : "bg-muted-foreground")} />
+          <span className="font-medium">{strategy.name}</span>
+          <span className={cn("text-xs rounded px-1.5 py-0.5 font-medium", strategy.is_paper ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400")}>
+            {strategy.is_paper ? "paper" : "live"}
+          </span>
+        </Link>
+        <p className="text-xs text-muted-foreground font-mono ml-4">{strategy.strategy_class.split(".").pop()}</p>
+      </td>
+      <td className="py-2.5 px-3 text-right text-muted-foreground">{stats?.total_trades ?? "—"}</td>
+      <td className="py-2.5 px-3 text-right">
+        {stats ? (
+          <span className={stats.win_rate >= 0.5 ? "text-green-600" : "text-red-500"}>
+            {(stats.win_rate * 100).toFixed(1)}%
+          </span>
+        ) : "—"}
+      </td>
+      <td className="py-2.5 px-3 text-right font-medium">
+        {stats ? (
+          <span className={stats.total_pnl >= 0 ? "text-green-600" : "text-red-500"}>
+            {formatPnl(stats.total_pnl)}
+          </span>
+        ) : "—"}
+      </td>
+    </tr>
+  );
+}
 
 export default function DashboardPage() {
   const { data: stats } = useQuery({
@@ -27,18 +65,8 @@ export default function DashboardPage() {
     refetchInterval: 15_000,
   });
 
-  const { data: balance } = useQuery({
-    queryKey: ["balance"],
-    queryFn: () => trades.balance(),
-    refetchInterval: 15_000,
-  });
-
-  const lastBalance = useLiveDataStore((s) => s.lastBalance);
-  const displayBalance = lastBalance ?? balance?.balance ?? 0;
-
   const activeStrategies = allStrategies?.filter((s) => s.enabled).length ?? 0;
 
-  // Show chart for first tick-processed asset of first active strategy
   const chartAsset = allStrategies
     ?.find((s) => s.enabled)
     ?.assets.find((a) => a.tick_process)
@@ -68,9 +96,9 @@ export default function DashboardPage() {
           subtext={`${allStrategies?.length ?? 0} total`}
         />
         <StatCard
-          label="Paper Balance"
-          value={`$${displayBalance.toLocaleString("en-US", { minimumFractionDigits: 2 })}`}
-          subtext={`${openPositions?.length ?? 0} open positions`}
+          label="Open Positions"
+          value={String(openPositions?.length ?? 0)}
+          subtext="across all strategies"
         />
       </div>
 
@@ -84,7 +112,28 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <RecentSignalsTable />
+      {allStrategies && allStrategies.length > 0 && (
+        <div className="rounded-lg border bg-card overflow-hidden">
+          <div className="border-b px-4 py-3">
+            <p className="text-sm font-semibold">Strategies</p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-xs text-muted-foreground">
+                <th className="py-2 px-3 text-left font-medium">Strategy</th>
+                <th className="py-2 px-3 text-right font-medium">Trades</th>
+                <th className="py-2 px-3 text-right font-medium">Win %</th>
+                <th className="py-2 px-3 text-right font-medium">P&L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allStrategies.map((s) => (
+                <StrategyOverviewRow key={s.id} strategy={s} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {openPositions && openPositions.length > 0 && (
         <div className="rounded-lg border bg-card p-5">
@@ -108,7 +157,11 @@ export default function DashboardPage() {
                   </td>
                   <td className="py-2">${pos.entry_price.toLocaleString()}</td>
                   <td className="py-2">{pos.size.toFixed(4)}</td>
-                  <td className="py-2 font-mono text-xs text-muted-foreground">{pos.strategy_id}</td>
+                  <td className="py-2 font-mono text-xs text-muted-foreground">
+                    <Link href={`/strategies/${pos.strategy_id}`} className="hover:underline">
+                      {pos.strategy_id.slice(0, 8)}…
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>

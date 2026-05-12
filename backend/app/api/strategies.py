@@ -42,6 +42,7 @@ class StrategyAssetIn(BaseModel):
     subscribe_depth: bool = False
     exchange_account_num: int = 0
     description: Optional[str] = None
+    transaction_fee: float = 0.0002
 
 
 class StrategyExchangeRefIn(BaseModel):
@@ -58,6 +59,7 @@ class StrategyConfigCreate(BaseModel):
     params: dict = {}
     parameters_schema: Optional[list] = None
     signal_definitions: Optional[list] = None
+    base_asset: Optional[str] = None
     assets: list[StrategyAssetIn] = []
     exchange_accounts: list[StrategyExchangeRefIn] = []
 
@@ -71,6 +73,7 @@ class StrategyConfigUpdate(BaseModel):
     params: Optional[dict] = None
     parameters_schema: Optional[list] = None
     signal_definitions: Optional[list] = None
+    base_asset: Optional[str] = None
     assets: Optional[list[StrategyAssetIn]] = None
     exchange_accounts: Optional[list[StrategyExchangeRefIn]] = None
 
@@ -86,6 +89,7 @@ def _serialize(config: StrategyConfig) -> dict:
         "params": config.params,
         "parameters_schema": config.parameters_schema,
         "signal_definitions": config.signal_definitions,
+        "base_asset": config.base_asset,
         "created_at": config.created_at.isoformat() if config.created_at else None,
         "updated_at": config.updated_at.isoformat() if config.updated_at else None,
         "assets": [
@@ -102,6 +106,7 @@ def _serialize(config: StrategyConfig) -> dict:
                 "description": a.description,
                 "base_asset": a.base_asset,
                 "quote_asset": a.quote_asset,
+                "transaction_fee": a.transaction_fee,
             }
             for a in (config.assets or [])
         ],
@@ -283,6 +288,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
         params=body.params or {},
         parameters_schema=body.parameters_schema,
         signal_definitions=body.signal_definitions,
+        base_asset=body.base_asset,
     )
     db.add(config)
 
@@ -302,6 +308,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
             description=asset_in.description,
             base_asset=base_asset,
             quote_asset=quote_asset,
+            transaction_fee=asset_in.transaction_fee,
         ))
 
     for i, ref_in in enumerate(body.exchange_accounts):
@@ -344,6 +351,8 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
         config.parameters_schema = body.parameters_schema
     if body.signal_definitions is not None:
         config.signal_definitions = body.signal_definitions
+    if body.base_asset is not None:
+        config.base_asset = body.base_asset
 
     if body.assets is not None:
         asset_info = await _validate_assets(body.assets)
@@ -365,6 +374,7 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
                 description=asset_in.description,
                 base_asset=base_asset,
                 quote_asset=quote_asset,
+                transaction_fee=asset_in.transaction_fee,
             ))
 
     if body.exchange_accounts is not None:

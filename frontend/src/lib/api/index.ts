@@ -108,6 +108,7 @@ export const tradeHistory = {
 
 export const trades = {
   balance: () => api.get<{ balance: number }>("/trades/balance"),
+  balances: (configId: string) => api.get<{ balances: Record<string, number> }>(`/trades/balance/${configId}`),
 };
 
 // ── Settings ──────────────────────────────────────────────

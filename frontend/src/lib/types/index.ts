@@ -11,6 +11,7 @@ export interface StrategyAsset {
   base_asset?: string;
   quote_asset?: string;
   description?: string;
+  transaction_fee?: number;
 }
 
 export interface StrategyExchangeRef {
@@ -55,6 +56,7 @@ export interface Strategy {
   params: Record<string, unknown>;
   parameters_schema?: ParameterSchema[];
   signal_definitions?: SignalDefinition[];
+  base_asset?: string;
   assets: StrategyAsset[];
   exchange_accounts: StrategyExchangeRef[];
   created_at?: string;

@@ -130,6 +130,7 @@ def upgrade() -> None:
     sa.Column('params', sa.JSON(), nullable=True),
     sa.Column('parameters_schema', sa.JSON(), nullable=True),
     sa.Column('signal_definitions', sa.JSON(), nullable=True),
+    sa.Column('base_asset', sa.String(length=20), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id'),
@@ -180,6 +181,7 @@ def upgrade() -> None:
     sa.Column('base_asset', sa.String(length=20), nullable=True),
     sa.Column('quote_asset', sa.String(length=20), nullable=True),
     sa.Column('exchange_account_num', sa.Integer(), nullable=False),
+    sa.Column('transaction_fee', sa.Float(), server_default='0.0002', nullable=False),
     sa.ForeignKeyConstraint(['strategy_id'], ['strategy_configs.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
