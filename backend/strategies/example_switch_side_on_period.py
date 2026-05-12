@@ -28,6 +28,8 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
     def parameter_schema(self) -> list[ParameterSchema]:
         return [
             ParameterSchema(name="period", type="int", default=10, min=1, max=600, description="Period between side switch (seconds)"),
+            ParameterSchema(name="tp_pct", type="float", default=0.02, min=0.001, max=0.5, description="Take profit percentage (e.g. 0.02 for 2%)"),
+            ParameterSchema(name="sl_pct", type="float", default=0.01, min=0.001, max=0.5, description="Stop loss percentage (e.g. 0.01 for 1%)"),
         ]
 
     @property
@@ -52,6 +54,8 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
         tick = context.tick
         leg_num = context.leg_num
         period: int = int(self.params.get("period", 10))
+        tp_pct: float = float(self.params.get("tp_pct", 0.02))
+        sl_pct: float = float(self.params.get("sl_pct", 0.01))
 
         leg = context.get_leg(leg_num)
         fee_rate: float = leg.transaction_fee if leg else 0.0002
@@ -68,12 +72,67 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                 LegOrder(
                     leg_num=leg_num,
                     action=SignalAction.OPEN_LONG,
-                    amount=0.1,
+                    amount=0.9,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
+                    tp_pct=tp_pct,
+                    sl_pct=sl_pct,
                 )
             ])
 
+        open_positions = await context.db.get_open_positions(context.config_id, symbol=tick.symbol)
+
+        # ── TP / SL check (highest priority) ──────────────────────────
+        if open_positions:
+            pos = open_positions[0]
+            if pos.side == "long":
+                tp_hit = tick.close >= pos.entry_price * (1 + tp_pct)
+                sl_hit = tick.close <= pos.entry_price * (1 - sl_pct)
+            else:
+                tp_hit = tick.close <= pos.entry_price * (1 - tp_pct)
+                sl_hit = tick.close >= pos.entry_price * (1 + sl_pct)
+
+            if tp_hit or sl_hit:
+                if pos.side == "long":
+                    return ExecutionPlan(orders=[
+                        LegOrder(
+                            leg_num=leg_num,
+                            action=SignalAction.CLOSE_LONG,
+                            amount=0.9,
+                            amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+                            price_method=PriceMethod.MARKET,
+                        ),
+                        LegOrder(
+                            leg_num=leg_num,
+                            action=SignalAction.OPEN_SHORT,
+                            amount=0.9,
+                            amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+                            price_method=PriceMethod.MARKET,
+                            tp_pct=tp_pct,
+                            sl_pct=sl_pct,
+                        ),
+                    ])
+                else:
+                    return ExecutionPlan(orders=[
+                        LegOrder(
+                            leg_num=leg_num,
+                            action=SignalAction.CLOSE_SHORT,
+                            amount=0.9,
+                            amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+                            price_method=PriceMethod.MARKET,
+                        ),
+                        LegOrder(
+                            leg_num=leg_num,
+                            action=SignalAction.OPEN_LONG,
+                            amount=0.9,
+                            amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+                            price_method=PriceMethod.MARKET,
+                            tp_pct=tp_pct,
+                            sl_pct=sl_pct,
+                        ),
+                    ])
+
+        # ── Period-based side switch ───────────────────────────────────
         last_trade = history[0]
         tick_dt = datetime.fromtimestamp(tick.time / 1000, tz=timezone.utc)
         elapsed_seconds = (tick_dt - last_trade.occurred_at).total_seconds()
@@ -81,7 +140,6 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
             return None
 
         # Guard: only switch if unrealized PnL covers the round-trip fee cost (close + reopen)
-        open_positions = await context.db.get_open_positions(context.config_id, symbol=tick.symbol)
         if open_positions:
             pos = open_positions[0]
             if pos.side == "long":
@@ -98,16 +156,18 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                 LegOrder(
                     leg_num=leg_num,
                     action=SignalAction.CLOSE_LONG,
-                    amount=0.1,
+                    amount=0.9,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
                 ),
                 LegOrder(
                     leg_num=leg_num,
                     action=SignalAction.OPEN_SHORT,
-                    amount=0.1,
+                    amount=0.9,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
+                    tp_pct=tp_pct,
+                    sl_pct=sl_pct,
                 ),
             ])
         else:  # open_short or close_long
@@ -115,15 +175,17 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                 LegOrder(
                     leg_num=leg_num,
                     action=SignalAction.CLOSE_SHORT,
-                    amount=0.1,
+                    amount=0.9,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
                 ),
                 LegOrder(
                     leg_num=leg_num,
                     action=SignalAction.OPEN_LONG,
-                    amount=0.1,
+                    amount=0.9,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
+                    tp_pct=tp_pct,
+                    sl_pct=sl_pct,
                 ),
             ])

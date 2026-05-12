@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { positions, strategies } from "@/lib/api";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { LivePriceChart } from "@/components/dashboard/LivePriceChart";
 import { formatPnl } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type { Strategy } from "@/lib/types";
@@ -67,12 +66,6 @@ export default function DashboardPage() {
 
   const activeStrategies = allStrategies?.filter((s) => s.enabled).length ?? 0;
 
-  const chartAsset = allStrategies
-    ?.find((s) => s.enabled)
-    ?.assets.find((a) => a.tick_process)
-    ?? allStrategies?.find((s) => s.enabled)?.assets[0]
-    ?? null;
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -101,16 +94,6 @@ export default function DashboardPage() {
           subtext="across all strategies"
         />
       </div>
-
-      {chartAsset && (
-        <div className="rounded-lg border bg-card p-5">
-          <p className="mb-3 text-sm font-semibold">
-            {chartAsset.symbol.toUpperCase()} — {chartAsset.timeframe}
-            <span className="ml-2 text-xs font-normal text-muted-foreground">({chartAsset.exchange})</span>
-          </p>
-          <LivePriceChart assetSlug={chartAsset.symbol} timeframe={chartAsset.timeframe} />
-        </div>
-      )}
 
       {allStrategies && allStrategies.length > 0 && (
         <div className="rounded-lg border bg-card overflow-hidden">

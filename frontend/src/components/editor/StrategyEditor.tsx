@@ -54,8 +54,8 @@ function InitialAssetsEditor({
   const entries = Object.entries(value);
   return (
     <div className="space-y-2">
-      {entries.map(([asset, qty]) => (
-        <div key={asset} className="flex items-center gap-2">
+      {entries.map(([asset, qty], index) => (
+        <div key={index} className="flex items-center gap-2">
           <input
             value={asset}
             onChange={(e) => {

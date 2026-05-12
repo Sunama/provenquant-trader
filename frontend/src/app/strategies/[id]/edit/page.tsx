@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { Breadcrumb } from "@/components/shared/Breadcrumb";
 import { useQuery } from "@tanstack/react-query";
 import { strategies } from "@/lib/api";
 import { StrategyEditor } from "@/components/editor/StrategyEditor";
@@ -18,7 +19,12 @@ export default function EditStrategyPage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Edit Strategy: {id}</h1>
+      <Breadcrumb items={[
+        { label: "Strategies", href: "/strategies" },
+        { label: data.name, href: `/strategies/${id}` },
+        { label: "Edit" },
+      ]} />
+      <h1 className="text-2xl font-bold">Edit Strategy: {data.name}</h1>
       <StrategyEditor initial={data} />
     </div>
   );

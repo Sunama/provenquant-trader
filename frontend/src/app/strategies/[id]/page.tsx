@@ -8,6 +8,7 @@ import { strategies, positions, tradeHistory, trades } from "@/lib/api";
 import { StrategyAssetChart } from "@/components/charts/StrategyAssetChart";
 import { useLiveDataStore } from "@/lib/store/useLiveDataStore";
 import { useShallow } from "zustand/react/shallow";
+import { Breadcrumb } from "@/components/shared/Breadcrumb";
 import { formatPnl, formatPct } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -76,6 +77,10 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-6">
+      <Breadcrumb items={[
+        { label: "Strategies", href: "/strategies" },
+        { label: strategy.name },
+      ]} />
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">

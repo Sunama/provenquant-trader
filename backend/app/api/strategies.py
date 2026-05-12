@@ -9,6 +9,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -322,7 +323,11 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
             description=ref_in.description,
         ))
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A strategy with this name already exists")
     await _notify_trader()
     return {"id": config.id, "name": config.name}
 
