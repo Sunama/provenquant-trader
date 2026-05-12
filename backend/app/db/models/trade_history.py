@@ -26,7 +26,7 @@ class TradeHistory(Base):
         nullable=True, index=True,
     )
     occurred_at: Mapped[sa.DateTime] = mapped_column(
-        sa.DateTime(timezone=True), nullable=False, index=True
+        sa.DateTime(timezone=True), nullable=False, primary_key=True, index=True
     )
     # open_long | close_long | open_short | close_short |
     # transfer | withdraw | deposit

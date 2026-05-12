@@ -104,13 +104,14 @@ class PaperTradeAdapter(TradeAdapter):
         tp_price: Optional[float] = None,
         sl_price: Optional[float] = None,
         price_method: PriceMethod = PriceMethod.MARKET,
+        leverage: float = 1.0,
     ) -> OrderResult:
         order_id = str(uuid.uuid4())
 
         if price_method == PriceMethod.LIMIT:
-            return await self._place_limit_order(symbol, side, size, price, tp_price, sl_price, order_id)
+            return await self._place_limit_order(symbol, side, size, price, tp_price, sl_price, order_id, leverage)
 
-        return await self._fill_immediately(symbol, side, size, price, tp_price, sl_price, order_id)
+        return await self._fill_immediately(symbol, side, size, price, tp_price, sl_price, order_id, leverage)
 
     async def _fill_immediately(
         self,
@@ -121,22 +122,25 @@ class PaperTradeAdapter(TradeAdapter):
         tp_price: Optional[float],
         sl_price: Optional[float],
         order_id: str,
+        leverage: float = 1.0,
     ) -> OrderResult:
         r = await self._get_redis()
         await self._seed_if_empty()
 
-        cost = size * price
+        notional = size * price
+        margin = notional / leverage
         usdt_bal = await self.get_asset_balance(self.DEFAULT_QUOTE)
-        if cost > usdt_bal:
-            raise ValueError(f"Insufficient paper balance: need {cost:.2f} USDT, have {usdt_bal:.2f}")
+        if margin > usdt_bal:
+            raise ValueError(f"Insufficient paper balance: need {margin:.2f} USDT margin, have {usdt_bal:.2f}")
 
-        await r.incrbyfloat(self._asset_key(self.DEFAULT_QUOTE), -cost)
+        await r.incrbyfloat(self._asset_key(self.DEFAULT_QUOTE), -margin)
 
         position = {
             "symbol": symbol,
             "side": side,
             "size": size,
             "entry_price": price,
+            "leverage": leverage,
             "entry_time": datetime.now(timezone.utc).isoformat(),
             "tp_price": tp_price,
             "sl_price": sl_price,
@@ -162,6 +166,7 @@ class PaperTradeAdapter(TradeAdapter):
         tp_price: Optional[float],
         sl_price: Optional[float],
         order_id: str,
+        leverage: float = 1.0,
     ) -> OrderResult:
         r = await self._get_redis()
         order = {
@@ -172,6 +177,7 @@ class PaperTradeAdapter(TradeAdapter):
             "limit_price": limit_price,
             "tp_price": tp_price,
             "sl_price": sl_price,
+            "leverage": leverage,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await r.set(self._pending_key(order_id), json.dumps(order))
@@ -202,14 +208,13 @@ class PaperTradeAdapter(TradeAdapter):
         pos = json.loads(raw)
         entry_price: float = pos["entry_price"]
         size: float = pos["size"]
+        leverage: float = float(pos.get("leverage", 1.0))
 
         is_long = side == "long"
-        if is_long:
-            pnl = (price - entry_price) * size
-        else:
-            pnl = (entry_price - price) * size
+        pnl = (price - entry_price) * size if is_long else (entry_price - price) * size
 
-        proceeds = size * price + pnl
+        margin = entry_price * size / leverage   # original margin that was locked
+        proceeds = margin + pnl
         await r.incrbyfloat(self._asset_key(self.DEFAULT_QUOTE), proceeds)
         await r.delete(key)
 
@@ -282,6 +287,7 @@ class PaperTradeAdapter(TradeAdapter):
                     tp_price=order.get("tp_price"),
                     sl_price=order.get("sl_price"),
                     order_id=oid,
+                    leverage=float(order.get("leverage", 1.0)),
                 )
                 await r.delete(self._pending_key(oid))
                 await r.srem(self._pending_set(), oid)

@@ -18,7 +18,7 @@ class Tick(Base):
     symbol: Mapped[str] = mapped_column(sa.String, nullable=False, index=True)
     timeframe: Mapped[str] = mapped_column(sa.String, nullable=False)
     market_type: Mapped[str] = mapped_column(sa.String(20), nullable=False, index=True)
-    time: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), nullable=False, index=True)
+    time: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), nullable=False, primary_key=True, index=True)
 
     open: Mapped[float] = mapped_column(sa.Float, nullable=False)
     high: Mapped[float] = mapped_column(sa.Float, nullable=False)

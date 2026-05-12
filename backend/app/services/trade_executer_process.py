@@ -136,7 +136,7 @@ class TradeExecuterProcess:
                     logger.warning(f"Could not resolve leg_num={order.leg_num} for config={config_id}")
                     continue
 
-                symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee = leg_meta
+                symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee, leverage = leg_meta
                 price = order.price if order.price else tick_close
 
                 await self._execute_order(
@@ -150,6 +150,7 @@ class TradeExecuterProcess:
                     signal_price=price,
                     transaction_fee=transaction_fee,
                     account_base=account_base,
+                    leverage=leverage,
                 )
                 executed_count += 1
 
@@ -172,8 +173,8 @@ class TradeExecuterProcess:
             logger.exception(f"Error handling signal {msg_id}")
             # Do not ack — will be re-delivered (at-least-once)
 
-    async def _resolve_leg(self, config_id: str, leg_num: int) -> tuple[str, str, str, str, str, float] | None:
-        """Returns (symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee) or None."""
+    async def _resolve_leg(self, config_id: str, leg_num: int) -> tuple[str, str, str, str, str, float, float] | None:
+        """Returns (symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee, leverage) or None."""
         async with SessionLocal() as session:
             result = await session.execute(
                 select(StrategyAsset).where(
@@ -190,6 +191,7 @@ class TradeExecuterProcess:
                 asset.base_asset or "",
                 asset.quote_asset or "",
                 asset.transaction_fee,
+                asset.leverage,
             )
         return None
 
@@ -211,6 +213,7 @@ class TradeExecuterProcess:
         symbol: str,
         price: float,
         account_base: str = "USDT",
+        leverage: float = 1.0,
     ) -> float:
         """Convert LegOrder.amount + AmountMode into a concrete size (number of units)."""
         if order.amount_mode == AmountMode.UNITS:
@@ -236,12 +239,12 @@ class TradeExecuterProcess:
             # Real implementation would iterate open positions and sum notional value
             portfolio_value = balance  # TODO: add unrealized position values
             cost = portfolio_value * order.amount
-            return cost / price if price else 0.0
+            return (cost / price) * leverage if price else 0.0
 
         # Default: PORTFOLIO_PCT_REALIZED — fraction of account base asset balance
         balance = await adapter.get_asset_balance(account_base)
-        cost = balance * order.amount
-        return cost / price if price else 0.0
+        cost = balance * order.amount   # margin to use
+        return (cost / price) * leverage if price else 0.0
 
     async def _execute_order(
         self,
@@ -255,6 +258,7 @@ class TradeExecuterProcess:
         signal_price: float,
         transaction_fee: float = 0.0,
         account_base: str = "USDT",
+        leverage: float = 1.0,
     ) -> None:
         execute = order.action
 
@@ -292,6 +296,7 @@ class TradeExecuterProcess:
             quote_asset=quote_asset,
             transaction_fee=transaction_fee,
             account_base=account_base,
+            leverage=leverage,
         )
 
     async def _open_position(
@@ -306,9 +311,10 @@ class TradeExecuterProcess:
         quote_asset: str,
         transaction_fee: float = 0.0,
         account_base: str = "USDT",
+        leverage: float = 1.0,
     ) -> None:
         entry_price = signal_price or 1.0
-        size = await self._compute_size(order, adapter, strategy_id, symbol, entry_price, account_base)
+        size = await self._compute_size(order, adapter, strategy_id, symbol, entry_price, account_base, leverage)
         if size <= 0:
             logger.warning(f"Computed size=0 for {symbol}, skipping open")
             return
@@ -330,10 +336,12 @@ class TradeExecuterProcess:
             tp_price=tp_price,
             sl_price=sl_price,
             price_method=order.price_method,
+            leverage=leverage,
         )
 
-        cost = result.size * result.price
-        fee = cost * transaction_fee
+        notional = result.size * result.price
+        margin = notional / leverage
+        fee = margin * transaction_fee
         async with SessionLocal() as db:
             pos = Position(
                 strategy_id=strategy_id,
@@ -342,6 +350,7 @@ class TradeExecuterProcess:
                 entry_price=result.price,
                 entry_time=datetime.now(timezone.utc),
                 size=result.size,
+                leverage=leverage,
                 is_open=True,
             )
             db.add(pos)
@@ -355,8 +364,8 @@ class TradeExecuterProcess:
                 quote_asset=quote_asset,
                 bought_asset=base_asset if is_long else quote_asset,
                 sold_asset=quote_asset if is_long else base_asset,
-                bought_qty=result.size if is_long else cost,
-                sold_qty=cost if is_long else result.size,
+                bought_qty=result.size if is_long else margin,
+                sold_qty=margin if is_long else result.size,
                 exchange_rate=result.price,
                 fee=fee,
                 fee_asset=quote_asset,

@@ -47,6 +47,7 @@ def _make_process(mock_redis: AsyncMock) -> TradeExecuterProcess:
 def _make_adapter(balance: float = 10_000.0, open_position: PositionInfo | None = None) -> AsyncMock:
     adapter = AsyncMock()
     adapter.get_balance = AsyncMock(return_value=balance)
+    adapter.get_asset_balance = AsyncMock(return_value=balance)
     adapter.get_open_position = AsyncMock(return_value=open_position)
     adapter.open_position = AsyncMock(return_value=OrderResult(
         order_id="ord-1", symbol="btcusdt", side="long",
@@ -104,8 +105,8 @@ async def test_handle_message_processes_fresh_signal(mock_redis):
     orders = [_make_order()]
     fields = _make_message_fields(orders, ts_offset=-1)
 
-    with patch.object(process, "_resolve_leg", AsyncMock(return_value=("btcusdt", "30m", "futures", "BTC", "USDT"))), \
-         patch.object(process, "_resolve_adapter", AsyncMock(return_value=_make_adapter())), \
+    with patch.object(process, "_resolve_leg", AsyncMock(return_value=("btcusdt", "30m", "futures", "BTC", "USDT", 0.0))), \
+         patch.object(process, "_resolve_adapter", AsyncMock(return_value=(_make_adapter(), "USDT"))), \
          patch.object(process, "_execute_order", AsyncMock()) as mock_exec:
         await process._handle_message("2-0", fields)
 
@@ -129,8 +130,8 @@ async def test_handle_message_publishes_on_complete_when_set(mock_redis):
     fields = _make_message_fields(orders, ts_offset=-1)
     fields["on_complete"] = "settle_transfer"
 
-    with patch.object(process, "_resolve_leg", AsyncMock(return_value=("btcusdt", "30m", "futures", "BTC", "USDT"))), \
-         patch.object(process, "_resolve_adapter", AsyncMock(return_value=_make_adapter())), \
+    with patch.object(process, "_resolve_leg", AsyncMock(return_value=("btcusdt", "30m", "futures", "BTC", "USDT", 0.0))), \
+         patch.object(process, "_resolve_adapter", AsyncMock(return_value=(_make_adapter(), "USDT"))), \
          patch.object(process, "_execute_order", AsyncMock()):
         await process._handle_message("4-0", fields)
 

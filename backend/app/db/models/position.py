@@ -27,6 +27,7 @@ class Position(Base):
     pnl_pct: Mapped[Optional[float]] = mapped_column(sa.Float, nullable=True)
 
     is_open: Mapped[bool] = mapped_column(sa.Boolean, default=True)
+    leverage: Mapped[float] = mapped_column(sa.Float, nullable=False, default=1.0)
 
     created_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()

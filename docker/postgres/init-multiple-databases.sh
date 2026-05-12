@@ -15,6 +15,7 @@ create_db() {
         \c $database
         GRANT ALL ON SCHEMA public TO $username;
         CREATE EXTENSION IF NOT EXISTS pgcrypto;
+        CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 EOSQL
 }
 

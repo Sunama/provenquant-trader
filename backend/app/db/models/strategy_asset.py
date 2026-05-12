@@ -37,6 +37,9 @@ class StrategyAsset(Base):
     transaction_fee: Mapped[float] = mapped_column(
         sa.Float, nullable=False, server_default="0.0002", default=0.0002
     )
+    leverage: Mapped[float] = mapped_column(
+        sa.Float, nullable=False, server_default="1.0", default=1.0
+    )
 
     strategy: Mapped["StrategyConfig"] = relationship("StrategyConfig", back_populates="assets")
 

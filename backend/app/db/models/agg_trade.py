@@ -11,7 +11,7 @@ class AggTrade(Base):
     symbol: Mapped[str] = mapped_column(sa.String(50), nullable=False, index=True)
     exchange: Mapped[str] = mapped_column(sa.String(50), nullable=False)
     market_type: Mapped[str] = mapped_column(sa.String(20), nullable=False, index=True)
-    time: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), nullable=False, index=True)
+    time: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), nullable=False, primary_key=True, index=True)
     price: Mapped[float] = mapped_column(sa.Float, nullable=False)
     quantity: Mapped[float] = mapped_column(sa.Float, nullable=False)
     is_buyer_maker: Mapped[bool] = mapped_column(sa.Boolean, nullable=False)

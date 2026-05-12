@@ -72,6 +72,7 @@ class TradeAdapter(ABC):
         tp_price: Optional[float] = None,
         sl_price: Optional[float] = None,
         price_method: PriceMethod = PriceMethod.MARKET,
+        leverage: float = 1.0,
     ) -> OrderResult:
         """Open a new position. Returns fill details (may be pending for limit orders)."""
         ...

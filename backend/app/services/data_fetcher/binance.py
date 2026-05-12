@@ -248,7 +248,7 @@ class BinanceBaseDataFetcher(DataFetcher):
             )
             if is_closed:
                 logger.info(f"[bar] {tick.symbol} {tick.timeframe} {tick.market_type} close={tick.close:.4f} vol={tick.volume:.2f}")
-            await self._emit(tick)
+                await self._emit(tick)
         except Exception:
             logger.exception(f"[{self.__class__.__name__}] kline parse error")
 

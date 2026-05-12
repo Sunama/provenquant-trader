@@ -207,6 +207,7 @@ export function StrategyEditor({ initial }: Props) {
                         subscribe_depth: s.subscribe_depth ?? false,
                         exchange_account_num: 0,
                         transaction_fee: 0.0002,
+                        leverage: 1,
                       }))
                     );
                   }
@@ -300,7 +301,7 @@ export function StrategyEditor({ initial }: Props) {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Assets</h2>
           <button
             type="button"
-            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0, role: "primary", subscribe_depth: false, exchange_account_num: 0, transaction_fee: 0.0002 }])}
+            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0, role: "primary", subscribe_depth: false, exchange_account_num: 0, transaction_fee: 0.0002, leverage: 1 }])}
             className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
           >
             <Plus className="h-3 w-3" />
@@ -403,6 +404,22 @@ export function StrategyEditor({ initial }: Props) {
                     className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                 </div>
+                {asset.market_type === "futures" && (
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">
+                      Leverage <span className="text-muted-foreground/60">(futures only, 1–125x)</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={125}
+                      step={1}
+                      value={asset.leverage ?? 1}
+                      onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, leverage: parseFloat(e.target.value) || 1 } : a))}
+                      className="w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                )}
               </div>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 text-sm">

@@ -43,6 +43,7 @@ class StrategyAssetIn(BaseModel):
     exchange_account_num: int = 0
     description: Optional[str] = None
     transaction_fee: float = 0.0002
+    leverage: float = 1.0
 
 
 class StrategyExchangeRefIn(BaseModel):
@@ -107,6 +108,7 @@ def _serialize(config: StrategyConfig) -> dict:
                 "base_asset": a.base_asset,
                 "quote_asset": a.quote_asset,
                 "transaction_fee": a.transaction_fee,
+                "leverage": a.leverage,
             }
             for a in (config.assets or [])
         ],
@@ -309,6 +311,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
             base_asset=base_asset,
             quote_asset=quote_asset,
             transaction_fee=asset_in.transaction_fee,
+            leverage=asset_in.leverage,
         ))
 
     for i, ref_in in enumerate(body.exchange_accounts):
@@ -375,6 +378,7 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
                 base_asset=base_asset,
                 quote_asset=quote_asset,
                 transaction_fee=asset_in.transaction_fee,
+                leverage=asset_in.leverage,
             ))
 
     if body.exchange_accounts is not None:

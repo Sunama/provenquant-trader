@@ -12,6 +12,7 @@ export interface StrategyAsset {
   quote_asset?: string;
   description?: string;
   transaction_fee?: number;
+  leverage?: number;
 }
 
 export interface StrategyExchangeRef {
