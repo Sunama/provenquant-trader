@@ -86,3 +86,25 @@ class RedisDataFetcher:
         """Write an arbitrary strategy state value by key."""
         async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
             await r.set(f"strategy:state:{self._config_id}:{key}", value)
+
+    async def get_option_mark(self, symbol: str) -> Optional[dict]:
+        """
+        Return the latest mark price + Greeks for an option symbol.
+
+        Written by BinanceOptionsDataFetcher on every markPrice WebSocket message.
+        Key: ``options:mark:{symbol}``
+
+        Returns a dict with keys:
+            mark_price, index_price, delta, gamma, theta, vega, iv,
+            bid_iv, ask_iv, time
+        or None if the symbol has no data yet.
+        """
+        key = f"options:mark:{symbol}"
+        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as r:
+            raw = await r.get(key)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None

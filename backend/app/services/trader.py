@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from app.services.data_fetcher.binance import BinanceFuturesDataFetcher
+from app.services.data_fetcher.binance_options import BinanceOptionsDataFetcher
 from app.services.data_fetcher.binance_spot import BinanceSpotDataFetcher
 from app.services.strategy_executer_manager import StrategyExecuterManager
 
@@ -26,6 +27,7 @@ class Trader:
             "binance": {
                 "futures": BinanceFuturesDataFetcher,
                 "spot":    BinanceSpotDataFetcher,
+                "options": BinanceOptionsDataFetcher,
             },
         })
 
