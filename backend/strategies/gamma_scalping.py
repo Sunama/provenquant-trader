@@ -140,6 +140,8 @@ class GammaScalpingStrategy(StrategyExecuter):
     # ── Main entry point ──────────────────────────────────────────────────────
 
     async def execute(self, context: StrategyContext) -> Optional[ExecutionPlan]:
+        if not context.tick.is_closed:
+            return None
         tick = context.tick
         leg_num = context.leg_num
 
@@ -361,6 +363,7 @@ class GammaScalpingStrategy(StrategyExecuter):
                 amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                 price_method=PriceMethod.MARKET,
                 price=tick.close,
+                reason=f"Delta rebalance: closing long hedge (net_delta={net_delta_btc:+.5f} BTC)",
             ))
         elif current_hedge_side == "short" and current_hedge_size > 0:
             orders.append(LegOrder(
@@ -370,6 +373,7 @@ class GammaScalpingStrategy(StrategyExecuter):
                 amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                 price_method=PriceMethod.MARKET,
                 price=tick.close,
+                reason=f"Delta rebalance: closing short hedge (net_delta={net_delta_btc:+.5f} BTC)",
             ))
 
         # 2. Open new hedge to neutralise net_delta
@@ -390,6 +394,7 @@ class GammaScalpingStrategy(StrategyExecuter):
             amount_mode=AmountMode.UNITS,
             price_method=PriceMethod.MARKET,
             price=tick.close,
+            reason=f"Delta rebalance: opening {new_side} hedge (net_delta={net_delta_btc:+.5f} BTC)",
         ))
 
         await context.redis.set_state(_K_HSIDE, new_side)
@@ -425,6 +430,7 @@ class GammaScalpingStrategy(StrategyExecuter):
                 amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                 price_method=PriceMethod.MARKET,
                 price=tick.close,
+                reason=f"Straddle exit ({reason}): closing long hedge",
             ))
         elif hedge_side == "short" and hedge_size > 0:
             orders.append(LegOrder(
@@ -434,6 +440,7 @@ class GammaScalpingStrategy(StrategyExecuter):
                 amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                 price_method=PriceMethod.MARKET,
                 price=tick.close,
+                reason=f"Straddle exit ({reason}): closing short hedge",
             ))
 
         await self._clear_straddle_state(context)

@@ -9,15 +9,18 @@ from typing import Optional
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.core.settings import settings
+from app.db.models.position import Position
 from app.db.models.strategy_asset import StrategyAsset
 from app.db.models.strategy_config import StrategyConfig
 from app.db.models.strategy_exchange_ref import StrategyExchangeRef
+from app.db.models.trade_history import TradeHistory
 from app.db.session import SessionLocal
 from app.services.internal_data_fetcher import InternalDataFetcher
 from app.services.strategy_executer import StrategyExecuter
@@ -407,6 +410,8 @@ async def delete_strategy(strategy_id: str, db: AsyncSession = Depends(get_db)):
     config = await db.get(StrategyConfig, strategy_id)
     if not config:
         raise HTTPException(status_code=404, detail="Not found")
+    await db.execute(sa_delete(Position).where(Position.strategy_id == strategy_id))
+    await db.execute(sa_delete(TradeHistory).where(TradeHistory.strategy_id == strategy_id))
     await db.delete(config)
     await db.commit()
     await _notify_trader()

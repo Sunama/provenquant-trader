@@ -267,7 +267,8 @@ class TradeExecuterProcess:
             current = await adapter.get_open_position(symbol)
             if current:
                 await self._close_position(
-                    adapter, strategy_id, symbol, side, signal_price, "signal",
+                    adapter, strategy_id, symbol, side, signal_price,
+                    order.reason or "signal",
                     base_asset, quote_asset, market_type, transaction_fee,
                 )
             else:
@@ -352,6 +353,9 @@ class TradeExecuterProcess:
                 size=result.size,
                 leverage=leverage,
                 is_open=True,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                entry_reason=order.reason,
             )
             db.add(pos)
 
@@ -371,6 +375,7 @@ class TradeExecuterProcess:
                 fee_asset=quote_asset,
                 exchange="binance",
                 market_type=market_type,
+                reason=order.reason,
             )
             db.add(th)
             await db.commit()
@@ -445,6 +450,7 @@ class TradeExecuterProcess:
                     fee_asset=quote_asset,
                     exchange="binance",
                     market_type=market_type,
+                    reason=reason,
                 )
                 db.add(th)
                 await db.commit()

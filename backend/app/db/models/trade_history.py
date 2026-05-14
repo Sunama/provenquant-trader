@@ -48,6 +48,8 @@ class TradeHistory(Base):
     exchange: Mapped[str] = mapped_column(sa.String(50), nullable=False)
     market_type: Mapped[str] = mapped_column(sa.String(20), nullable=False)
 
+    reason: Mapped[Optional[str]] = mapped_column(sa.String(500), nullable=True, default=None)
+
     created_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )

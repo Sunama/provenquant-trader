@@ -21,7 +21,7 @@ class StrategyConfig(Base):
     id: Mapped[str] = mapped_column(
         sa.String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    name: Mapped[str] = mapped_column(sa.String(200), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(sa.String(200), nullable=False)
     strategy_class: Mapped[str] = mapped_column(sa.String, nullable=False)
     enabled: Mapped[bool] = mapped_column(sa.Boolean, default=True)
     is_paper: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default="true")

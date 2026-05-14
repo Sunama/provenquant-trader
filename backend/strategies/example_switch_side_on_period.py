@@ -77,6 +77,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     price_method=PriceMethod.MARKET,
                     tp_pct=tp_pct,
                     sl_pct=sl_pct,
+                    reason="Initial entry — no prior trades",
                 )
             ])
 
@@ -93,6 +94,8 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                 sl_hit = tick.close >= pos.entry_price * (1 + sl_pct)
 
             if tp_hit or sl_hit:
+                hit_label = "Take-profit" if tp_hit else "Stop-loss"
+                flip_label = "TP" if tp_hit else "SL"
                 if pos.side == "long":
                     return ExecutionPlan(orders=[
                         LegOrder(
@@ -101,6 +104,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                             amount=0.9,
                             amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                             price_method=PriceMethod.MARKET,
+                            reason=f"{hit_label} hit at {tick.close:.2f}",
                         ),
                         LegOrder(
                             leg_num=leg_num,
@@ -110,6 +114,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                             price_method=PriceMethod.MARKET,
                             tp_pct=tp_pct,
                             sl_pct=sl_pct,
+                            reason=f"Flipping long→short after {flip_label}",
                         ),
                     ])
                 else:
@@ -120,6 +125,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                             amount=0.9,
                             amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                             price_method=PriceMethod.MARKET,
+                            reason=f"{hit_label} hit at {tick.close:.2f}",
                         ),
                         LegOrder(
                             leg_num=leg_num,
@@ -129,6 +135,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                             price_method=PriceMethod.MARKET,
                             tp_pct=tp_pct,
                             sl_pct=sl_pct,
+                            reason=f"Flipping short→long after {flip_label}",
                         ),
                     ])
 
@@ -159,6 +166,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     amount=0.9,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
+                    reason=f"Period {elapsed_seconds:.0f}s/{period}s elapsed — switching side",
                 ),
                 LegOrder(
                     leg_num=leg_num,
@@ -168,6 +176,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     price_method=PriceMethod.MARKET,
                     tp_pct=tp_pct,
                     sl_pct=sl_pct,
+                    reason=f"Period switch: opening short after {elapsed_seconds:.0f}s",
                 ),
             ])
         else:  # open_short or close_long
@@ -178,6 +187,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     amount=0.9,
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
+                    reason=f"Period {elapsed_seconds:.0f}s/{period}s elapsed — switching side",
                 ),
                 LegOrder(
                     leg_num=leg_num,
@@ -187,5 +197,6 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     price_method=PriceMethod.MARKET,
                     tp_pct=tp_pct,
                     sl_pct=sl_pct,
+                    reason=f"Period switch: opening long after {elapsed_seconds:.0f}s",
                 ),
             ])

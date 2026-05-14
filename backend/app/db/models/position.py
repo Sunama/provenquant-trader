@@ -19,8 +19,12 @@ class Position(Base):
     entry_time: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     size: Mapped[float] = mapped_column(sa.Float, nullable=False)
 
+    tp_price: Mapped[Optional[float]] = mapped_column(sa.Float, nullable=True)
+    sl_price: Mapped[Optional[float]] = mapped_column(sa.Float, nullable=True)
+
     exit_price: Mapped[Optional[float]] = mapped_column(sa.Float, nullable=True)
     exit_time: Mapped[Optional[sa.DateTime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    entry_reason: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     exit_reason: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)  # "tp" | "sl" | "signal" | "manual"
 
     pnl: Mapped[Optional[float]] = mapped_column(sa.Float, nullable=True)

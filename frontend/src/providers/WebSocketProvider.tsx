@@ -16,7 +16,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const { addSignal, addExecution, setBalance, updateTick } = useLiveDataStore();
 
   useEffect(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8001/ws";
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || `${proto}://${window.location.hostname}:8001/ws`;
     wsClient.connect(wsUrl);
 
     const unsubSignal = wsClient.subscribe<SignalPayload>("signal", (payload) => {

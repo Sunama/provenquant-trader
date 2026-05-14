@@ -96,6 +96,36 @@ class RSIStrategy(StrategyExecuter):
 
         status = await context.redis.get_status()
 
+        # ── TP/SL check (takes priority over RSI signal) ──────────────
+        if status in ("long", "short"):
+            open_positions = await context.db.get_open_positions(context.config_id, symbol=tick.symbol)
+            if open_positions:
+                pos = open_positions[0]
+                if pos.side == "long":
+                    tp_hit = tick.close >= pos.entry_price * (1 + tp_pct)
+                    sl_hit = tick.close <= pos.entry_price * (1 - sl_pct)
+                else:
+                    tp_hit = tick.close <= pos.entry_price * (1 - tp_pct)
+                    sl_hit = tick.close >= pos.entry_price * (1 + sl_pct)
+                if tp_hit or sl_hit:
+                    hit_label = "Take-profit" if tp_hit else "Stop-loss"
+                    close_action = SignalAction.CLOSE_LONG if pos.side == "long" else SignalAction.CLOSE_SHORT
+                    await context.redis.set_status("neutral")
+                    return ExecutionPlan(orders=[
+                        LegOrder(
+                            leg_num=leg_num,
+                            action=close_action,
+                            amount=1.0,
+                            amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
+                            price_method=PriceMethod.MARKET,
+                            price=tick.close,
+                            reason=f"{hit_label} hit at {tick.close:.2f}",
+                        )
+                    ])
+
+        if not tick.is_closed:
+            return None
+
         if rsi < oversold and status != "long":
             orders: list[LegOrder] = []
             if status == "short":
@@ -106,6 +136,7 @@ class RSIStrategy(StrategyExecuter):
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
                     price=tick.close,
+                    reason=f"RSI oversold: RSI={rsi:.1f} < {oversold} — reversing short",
                 ))
             orders.append(LegOrder(
                 leg_num=leg_num,
@@ -116,6 +147,7 @@ class RSIStrategy(StrategyExecuter):
                 price=tick.close,
                 tp_pct=tp_pct,
                 sl_pct=sl_pct,
+                reason=f"RSI oversold: RSI={rsi:.1f} < {oversold}",
             ))
             await context.redis.set_status("long")
             return ExecutionPlan(orders=orders)
@@ -131,6 +163,7 @@ class RSIStrategy(StrategyExecuter):
                     amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                     price_method=PriceMethod.MARKET,
                     price=tick.close,
+                    reason=f"RSI overbought: RSI={rsi:.1f} > {overbought} — reversing long",
                 ))
             orders.append(LegOrder(
                 leg_num=leg_num,
@@ -141,6 +174,7 @@ class RSIStrategy(StrategyExecuter):
                 price=tick.close,
                 tp_pct=tp_pct,
                 sl_pct=sl_pct,
+                reason=f"RSI overbought: RSI={rsi:.1f} > {overbought}",
             ))
             await context.redis.set_status("short")
             return ExecutionPlan(orders=orders)

@@ -92,6 +92,7 @@ class LegOrder:
     tp_pct: Optional[float] = None
     sl_pct: Optional[float] = None
     metadata: dict = field(default_factory=dict)
+    reason: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -105,6 +106,7 @@ class LegOrder:
             "tp_pct": self.tp_pct,
             "sl_pct": self.sl_pct,
             "metadata": self.metadata,
+            "reason": self.reason,
         }
 
     @classmethod
@@ -120,6 +122,7 @@ class LegOrder:
             tp_pct=float(d["tp_pct"]) if d.get("tp_pct") is not None else None,
             sl_pct=float(d["sl_pct"]) if d.get("sl_pct") is not None else None,
             metadata=d.get("metadata", {}),
+            reason=d.get("reason") or None,
         )
 
 

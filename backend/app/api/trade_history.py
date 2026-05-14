@@ -35,6 +35,7 @@ def _serialize(t: TradeHistory) -> dict:
         "fee_asset": t.fee_asset,
         "exchange": t.exchange,
         "market_type": t.market_type,
+        "reason": t.reason,
         "created_at": t.created_at.isoformat() if t.created_at else None,
     }
 

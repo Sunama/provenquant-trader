@@ -72,6 +72,8 @@ class PairTradeStrategy(StrategyExecuter):
         ]
 
     async def execute(self, context: StrategyContext) -> Optional[ExecutionPlan]:
+        if not context.tick.is_closed:
+            return None
         # Only execute on the primary (leg_num=0) tick
         if context.leg_num != 0:
             return None
@@ -107,18 +109,22 @@ class PairTradeStrategy(StrategyExecuter):
             return ExecutionPlan(orders=[
                 LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
-                         price_method=PriceMethod.MARKET, price=tick.close),
+                         price_method=PriceMethod.MARKET, price=tick.close,
+                         reason=f"z-score={z:.2f} < -{z_threshold}: BTC cheap vs ETH — long BTC"),
                 LegOrder(leg_num=1, action=SignalAction.OPEN_SHORT, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
-                         price_method=PriceMethod.MARKET),
+                         price_method=PriceMethod.MARKET,
+                         reason=f"z-score={z:.2f} < -{z_threshold}: BTC cheap vs ETH — short ETH"),
             ])
         else:
             # BTC is expensive relative to ETH: short BTC, long ETH
             return ExecutionPlan(orders=[
                 LegOrder(leg_num=0, action=SignalAction.OPEN_SHORT, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
-                         price_method=PriceMethod.MARKET, price=tick.close),
+                         price_method=PriceMethod.MARKET, price=tick.close,
+                         reason=f"z-score={z:.2f} > +{z_threshold}: BTC expensive vs ETH — short BTC"),
                 LegOrder(leg_num=1, action=SignalAction.OPEN_LONG, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
-                         price_method=PriceMethod.MARKET),
+                         price_method=PriceMethod.MARKET,
+                         reason=f"z-score={z:.2f} > +{z_threshold}: BTC expensive vs ETH — long ETH"),
             ])

@@ -72,8 +72,11 @@ export interface Position {
   entry_price: number;
   entry_time: string;
   size: number;
+  tp_price?: number;
+  sl_price?: number;
   exit_price?: number;
   exit_time?: string;
+  entry_reason?: string;
   exit_reason?: string;
   pnl?: number;
   pnl_pct?: number;
@@ -166,6 +169,7 @@ export interface TradeHistory {
   fee_asset: string;
   exchange: string;
   market_type: string;
+  reason?: string;
   created_at?: string;
 }
 

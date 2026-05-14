@@ -8,6 +8,7 @@ import { strategies, positions, tradeHistory, trades } from "@/lib/api";
 import { StrategyAssetChart } from "@/components/charts/StrategyAssetChart";
 import { useLiveDataStore } from "@/lib/store/useLiveDataStore";
 import { useShallow } from "zustand/react/shallow";
+import type { TickPayload } from "@/lib/types";
 import { Breadcrumb } from "@/components/shared/Breadcrumb";
 import { formatPnl, formatPct } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,21 @@ function TradeTypeBadge({ type }: { type: string }) {
       {type.replace(/_/g, " ")}
     </span>
   );
+}
+
+function getPriceForSymbol(
+  symbol: string,
+  stores: Record<string, TickPayload>[],
+): number | null {
+  const lower = symbol.toLowerCase();
+  for (const store of stores) {
+    for (const [key, tick] of Object.entries(store)) {
+      if (key.split(":")[0].toLowerCase() === lower) {
+        return tick.close;
+      }
+    }
+  }
+  return null;
 }
 
 export default function StrategyDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -72,6 +88,14 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
       s.recentExecutions.filter((e) => e.strategy_id === id || e.strategy_id === strategy?.id)
     )
   );
+
+  const { livePrices, latestTicks } = useLiveDataStore(
+    useShallow((s) => ({ livePrices: s.livePrices, latestTicks: s.latestTicks }))
+  );
+
+  const openPositions = (positionList ?? []).filter((p) => p.is_open);
+  const closedPositions = (positionList ?? []).filter((p) => !p.is_open);
+  const totalRealizedPnl = closedPositions.reduce((sum, p) => sum + (p.pnl ?? 0), 0);
 
   if (!strategy) return <p className="text-muted-foreground">Loading…</p>;
 
@@ -258,6 +282,7 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
                   <th className="pb-2 text-left font-medium">Bought</th>
                   <th className="pb-2 text-left font-medium">Sold</th>
                   <th className="pb-2 text-left font-medium">Fee</th>
+                  <th className="pb-2 text-left font-medium">Reason</th>
                 </tr>
               </thead>
               <tbody>
@@ -279,8 +304,11 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
                       {th.sold_qty.toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
                       <span className="text-xs text-muted-foreground">{th.sold_asset}</span>
                     </td>
-                    <td className="py-2 text-xs text-muted-foreground">
+                    <td className="py-2 text-xs text-muted-foreground whitespace-nowrap">
                       {th.fee > 0 ? `${th.fee} ${th.fee_asset}` : "—"}
+                    </td>
+                    <td className="py-2 text-xs text-muted-foreground max-w-[240px]">
+                      {th.reason ?? <span className="opacity-40">—</span>}
                     </td>
                   </tr>
                 ))}
@@ -290,48 +318,155 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
         )}
       </div>
 
-      <div className="rounded-lg border bg-card p-5">
-        <p className="mb-3 text-sm font-semibold">Positions</p>
-        {!positionList || positionList.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No positions yet.</p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-xs text-muted-foreground">
-                <th className="pb-2 text-left font-medium">Asset</th>
-                <th className="pb-2 text-left font-medium">Side</th>
-                <th className="pb-2 text-left font-medium">Entry</th>
-                <th className="pb-2 text-left font-medium">Exit</th>
-                <th className="pb-2 text-left font-medium">P&L</th>
-                <th className="pb-2 text-left font-medium">Reason</th>
-                <th className="pb-2 text-left font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positionList.map((pos) => (
-                <tr key={pos.id} className="border-b last:border-0">
-                  <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
-                  <td className={cn("py-2 font-semibold", pos.side === "long" || pos.side === "buy" ? "text-green-600" : "text-red-500")}>
-                    {pos.side.toUpperCase()}
-                  </td>
-                  <td className="py-2">${pos.entry_price.toLocaleString()}</td>
-                  <td className="py-2">{pos.exit_price ? `$${pos.exit_price.toLocaleString()}` : "—"}</td>
-                  <td className={cn("py-2 font-medium", (pos.pnl ?? 0) >= 0 ? "text-green-600" : "text-red-500")}>
-                    {formatPnl(pos.pnl)}
-                    {pos.pnl_pct !== undefined && pos.pnl_pct !== null && (
-                      <span className="ml-1 text-xs">({formatPct(pos.pnl_pct)})</span>
-                    )}
-                  </td>
-                  <td className="py-2 text-muted-foreground text-xs">{pos.exit_reason ?? "—"}</td>
-                  <td className="py-2">
-                    <span className={cn("text-xs rounded-full px-2 py-0.5", pos.is_open ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground")}>
-                      {pos.is_open ? "OPEN" : "CLOSED"}
-                    </span>
-                  </td>
+      {openPositions.length > 0 && (
+        <div className="rounded-lg border bg-card p-5">
+          <p className="mb-3 text-sm font-semibold">Open Positions</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-xs text-muted-foreground">
+                  <th className="pb-2 text-left font-medium">Asset</th>
+                  <th className="pb-2 text-left font-medium">Side</th>
+                  <th className="pb-2 text-left font-medium">Entry Price</th>
+                  <th className="pb-2 text-left font-medium">Size</th>
+                  <th className="pb-2 text-left font-medium">TP</th>
+                  <th className="pb-2 text-left font-medium">SL</th>
+                  <th className="pb-2 text-left font-medium">Entry Reason</th>
+                  <th className="pb-2 text-left font-medium">Unrealized P&L</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {openPositions.map((pos) => {
+                  const currentPrice = getPriceForSymbol(pos.symbol, [livePrices, latestTicks]);
+                  const isLong = pos.side === "long";
+                  const unrealizedPnl =
+                    currentPrice != null
+                      ? isLong
+                        ? (currentPrice - pos.entry_price) * pos.size
+                        : (pos.entry_price - currentPrice) * pos.size
+                      : null;
+                  const unrealizedPnlPct =
+                    unrealizedPnl != null && pos.entry_price > 0 && pos.size > 0
+                      ? unrealizedPnl / (pos.entry_price * pos.size)
+                      : null;
+                  return (
+                    <tr key={pos.id} className="border-b last:border-0">
+                      <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
+                      <td className={cn("py-2 font-semibold", isLong ? "text-green-600" : "text-red-500")}>
+                        {pos.side.toUpperCase()}
+                      </td>
+                      <td className="py-2">${pos.entry_price.toLocaleString()}</td>
+                      <td className="py-2 text-muted-foreground">{pos.size}</td>
+                      <td className="py-2 text-xs">
+                        {pos.tp_price != null ? (
+                          <span className="text-green-600 font-medium">
+                            ${pos.tp_price.toLocaleString()}
+                            <span className="ml-1 text-muted-foreground">
+                              ({isLong
+                                ? `+${(((pos.tp_price - pos.entry_price) / pos.entry_price) * 100).toFixed(2)}%`
+                                : `+${(((pos.entry_price - pos.tp_price) / pos.entry_price) * 100).toFixed(2)}%`})
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="opacity-40">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-xs">
+                        {pos.sl_price != null ? (
+                          <span className="text-red-500 font-medium">
+                            ${pos.sl_price.toLocaleString()}
+                            <span className="ml-1 text-muted-foreground">
+                              ({isLong
+                                ? `-${(((pos.entry_price - pos.sl_price) / pos.entry_price) * 100).toFixed(2)}%`
+                                : `-${(((pos.sl_price - pos.entry_price) / pos.entry_price) * 100).toFixed(2)}%`})
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="opacity-40">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-xs text-muted-foreground max-w-[220px]">
+                        {pos.entry_reason ?? <span className="opacity-40">—</span>}
+                      </td>
+                      <td className="py-2">
+                        {unrealizedPnl != null ? (
+                          <span className={cn("font-medium", unrealizedPnl >= 0 ? "text-green-600" : "text-red-500")}>
+                            {formatPnl(unrealizedPnl)}
+                            {unrealizedPnlPct != null && (
+                              <span className="ml-1 text-xs">({formatPct(unrealizedPnlPct)})</span>
+                            )}
+                            <span className="ml-2 text-xs text-muted-foreground">
+                              @ ${currentPrice!.toLocaleString()}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Waiting for price…</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg border bg-card p-5">
+        <p className="mb-3 text-sm font-semibold">Position History</p>
+        {closedPositions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No closed positions yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-xs text-muted-foreground">
+                  <th className="pb-2 text-left font-medium">Asset</th>
+                  <th className="pb-2 text-left font-medium">Side</th>
+                  <th className="pb-2 text-left font-medium">Entry</th>
+                  <th className="pb-2 text-left font-medium">Exit</th>
+                  <th className="pb-2 text-left font-medium">Entry Reason</th>
+                  <th className="pb-2 text-left font-medium">Realized P&L</th>
+                  <th className="pb-2 text-left font-medium">Exit Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {closedPositions.map((pos) => (
+                  <tr key={pos.id} className="border-b last:border-0">
+                    <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
+                    <td className={cn("py-2 font-semibold", pos.side === "long" ? "text-green-600" : "text-red-500")}>
+                      {pos.side.toUpperCase()}
+                    </td>
+                    <td className="py-2">${pos.entry_price.toLocaleString()}</td>
+                    <td className="py-2">{pos.exit_price != null ? `$${pos.exit_price.toLocaleString()}` : "—"}</td>
+                    <td className="py-2 text-xs text-muted-foreground max-w-[200px]">
+                      {pos.entry_reason ?? <span className="opacity-40">—</span>}
+                    </td>
+                    <td className={cn("py-2 font-medium", (pos.pnl ?? 0) >= 0 ? "text-green-600" : "text-red-500")}>
+                      {formatPnl(pos.pnl)}
+                      {pos.pnl_pct != null && (
+                        <span className="ml-1 text-xs">({formatPct(pos.pnl_pct)})</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-xs text-muted-foreground max-w-[200px]">
+                      {pos.exit_reason ?? <span className="opacity-40">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t">
+                  <td colSpan={5} className="pt-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Total Realized P&L ({closedPositions.length} trades)
+                  </td>
+                  <td className={cn("pt-3 font-bold", totalRealizedPnl >= 0 ? "text-green-600" : "text-red-500")}>
+                    {formatPnl(totalRealizedPnl)}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         )}
       </div>
     </div>

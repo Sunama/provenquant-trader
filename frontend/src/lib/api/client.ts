@@ -1,6 +1,10 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL
-  ? `${process.env.NEXT_PUBLIC_API_URL}/api`
-  : "/api";
+function resolveBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return `${process.env.NEXT_PUBLIC_API_URL}/api`;
+  if (typeof window !== "undefined") return `${window.location.protocol}//${window.location.hostname}:8001/api`;
+  return "/api";
+}
+
+const BASE = resolveBase();
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

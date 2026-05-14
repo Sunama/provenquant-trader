@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ import app.db.base  # noqa: F401 — registers all ORM models so relationships r
 from app.db.models.strategy_config import StrategyConfig
 from app.db.session import SessionLocal
 from app.services.data_fetcher import DataFetcher, Subscription, TickCallback, TickData
-from app.services.strategy_executer import StrategyExecuter, StrategyLeg
+from app.services.strategy_executer import LegOrder, SignalAction, StrategyExecuter, StrategyLeg
 from app.services.strategy_context import StrategyContext
 
 logger = logging.getLogger(__name__)
@@ -216,6 +217,8 @@ class StrategyExecuterManager:
             if triggered_leg_num is None:
                 continue
 
+            await self._check_tp_sl(tick, config_id, triggered_leg_num, entry.is_paper)
+
             lock_key = f"strategy_lock:{config_id}"
             if not await self._try_acquire_lock(lock_key):
                 logger.debug(f"Strategy {config_id} still running, skipping tick")
@@ -236,6 +239,54 @@ class StrategyExecuterManager:
                     entry.params,
                 ]
             )
+
+    async def _check_tp_sl(self, tick: TickData, config_id: str, leg_num: int, is_paper: bool) -> None:
+        """Publish a CLOSE order to signals:trade if current price breaches TP or SL."""
+        if not is_paper:
+            return
+
+        redis_key = f"paper:{config_id}:position:{tick.symbol}"
+        raw = await self._redis.get(redis_key)
+        if not raw:
+            return
+
+        pos = json.loads(raw)
+        tp: float | None = pos.get("tp_price")
+        sl: float | None = pos.get("sl_price")
+        if tp is None and sl is None:
+            return
+
+        side: str = pos["side"]
+        price = tick.close
+
+        hit_tp = tp is not None and ((side == "long" and price >= tp) or (side == "short" and price <= tp))
+        hit_sl = sl is not None and ((side == "long" and price <= sl) or (side == "short" and price >= sl))
+
+        if not hit_tp and not hit_sl:
+            return
+
+        action = SignalAction.CLOSE_LONG if side == "long" else SignalAction.CLOSE_SHORT
+        reason = "tp" if hit_tp else "sl"
+        close_order = LegOrder(action=action, leg_num=leg_num, amount=0.0, reason=reason)
+
+        await self._redis.xadd(
+            "signals:trade",
+            {
+                "config_id": config_id,
+                "strategy_id": config_id,
+                "ts": str(time.time()),
+                "tick_symbol": tick.symbol,
+                "tick_timeframe": tick.timeframe,
+                "tick_market_type": tick.market_type,
+                "tick_close": str(price),
+                "tick_time": str(tick.time),
+                "on_complete": "",
+                "plan_metadata": "{}",
+                "orders": json.dumps([close_order.to_dict()]),
+            },
+            maxlen=10000,
+        )
+        logger.info(f"[TP/SL] {reason.upper()} {side} {tick.symbol} @ {price} (config={config_id})")
 
     async def _try_acquire_lock(self, key: str) -> bool:
         if not self._redis:
