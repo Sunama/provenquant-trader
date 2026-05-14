@@ -57,7 +57,7 @@ _K_SL_PCT    = "mb_sl_pct"      # sl_pct stored when opening (for TP/SL check)
 
 # A prediction is considered "fresh" if the current time is within this window
 # of its bar time (signals come from 1m bars, ~1–2 bar lag is normal)
-_MAX_SIGNAL_AGE_MS = 60 * 60 * 1000  # 1 hour
+_MAX_SIGNAL_AGE_MS = 2 * 60 * 1000  # 2 minutes
 
 _PQ_URL = "https://www.provenquant.com/api/assets/{symbol}/ml-predictions?timeframe=30m&days_back=7"
 
@@ -157,25 +157,33 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
 
         # ── Manage open position ──────────────────────────────────────────────
         if status in ("long", "short"):
+            # Verify against DB first — Redis status can get out of sync when a
+            # position is closed externally (e.g. by the trade executor's own
+            # TP/SL monitor) without a callback into execute().
+            open_positions = await context.db.get_open_positions(context.config_id, symbol=tick.symbol)
+            if not open_positions:
+                logger.info(f"[MBMLM] No open position found in DB (status={status}) — resetting stale Redis state")
+                await self._reset_state(context)
+                return None
+
+            pos = open_positions[0]
+
             # TP/SL check (takes priority over t1 expiry)
             tp_pct_stored = float(await context.redis.get_state(_K_TP_PCT, "0"))
             sl_pct_stored = float(await context.redis.get_state(_K_SL_PCT, "0"))
             if tp_pct_stored > 0 and sl_pct_stored > 0:
-                open_positions = await context.db.get_open_positions(context.config_id, symbol=tick.symbol)
-                if open_positions:
-                    pos = open_positions[0]
-                    if status == "long":
-                        tp_hit = tick.close >= pos.entry_price * (1 + tp_pct_stored)
-                        sl_hit = tick.close <= pos.entry_price * (1 - sl_pct_stored)
-                    else:
-                        tp_hit = tick.close <= pos.entry_price * (1 - tp_pct_stored)
-                        sl_hit = tick.close >= pos.entry_price * (1 + sl_pct_stored)
-                    if tp_hit or sl_hit:
-                        hit_label = "Take-profit" if tp_hit else "Stop-loss"
-                        return await self._close_position_tp_sl(
-                            context, tick, leg_num, status,
-                            reason=f"{hit_label} hit at {tick.close:.2f}",
-                        )
+                if status == "long":
+                    tp_hit = tick.close >= pos.entry_price * (1 + tp_pct_stored)
+                    sl_hit = tick.close <= pos.entry_price * (1 - sl_pct_stored)
+                else:
+                    tp_hit = tick.close <= pos.entry_price * (1 - tp_pct_stored)
+                    sl_hit = tick.close >= pos.entry_price * (1 + sl_pct_stored)
+                if tp_hit or sl_hit:
+                    hit_label = "Take-profit" if tp_hit else "Stop-loss"
+                    return await self._close_position_tp_sl(
+                        context, tick, leg_num, status,
+                        reason=f"{hit_label} hit at {tick.close:.2f}",
+                    )
 
             # t1 barrier expiry
             t1_ms = int(await context.redis.get_state(_K_T1_MS, "0"))
@@ -328,6 +336,13 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
 
     # ── Position close ────────────────────────────────────────────────────────
 
+    async def _reset_state(self, context: StrategyContext) -> None:
+        await context.redis.set_state(_K_STATUS, "neutral")
+        await context.redis.set_state(_K_T1_MS, "0")
+        await context.redis.set_state(_K_SIGNAL_MS, "0")
+        await context.redis.set_state(_K_TP_PCT, "0")
+        await context.redis.set_state(_K_SL_PCT, "0")
+
     async def _close_position(
         self,
         context: StrategyContext,
@@ -337,11 +352,7 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
     ) -> ExecutionPlan:
         action = SignalAction.CLOSE_LONG if status == "long" else SignalAction.CLOSE_SHORT
 
-        await context.redis.set_state(_K_STATUS, "neutral")
-        await context.redis.set_state(_K_T1_MS, "0")
-        await context.redis.set_state(_K_SIGNAL_MS, "0")
-        await context.redis.set_state(_K_TP_PCT, "0")
-        await context.redis.set_state(_K_SL_PCT, "0")
+        await self._reset_state(context)
 
         logger.info(
             f"[MBMLM] CLOSE {status.upper()} | t1_expired | price={tick.close}"
@@ -368,11 +379,7 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
     ) -> ExecutionPlan:
         action = SignalAction.CLOSE_LONG if status == "long" else SignalAction.CLOSE_SHORT
 
-        await context.redis.set_state(_K_STATUS, "neutral")
-        await context.redis.set_state(_K_T1_MS, "0")
-        await context.redis.set_state(_K_SIGNAL_MS, "0")
-        await context.redis.set_state(_K_TP_PCT, "0")
-        await context.redis.set_state(_K_SL_PCT, "0")
+        await self._reset_state(context)
 
         logger.info(f"[MBMLM] CLOSE {status.upper()} | {reason} | price={tick.close}")
         return ExecutionPlan(orders=[

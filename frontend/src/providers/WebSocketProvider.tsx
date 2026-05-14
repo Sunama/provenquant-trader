@@ -13,7 +13,7 @@ const WsContext = createContext<WsContextValue>({ connected: false });
 
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const [connected, setConnected] = useState(false);
-  const { addSignal, addExecution, setBalance, updateTick } = useLiveDataStore();
+  const { addSignal, addExecution, setBalance, updateTick, updateLivePrice } = useLiveDataStore();
 
   useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
@@ -35,7 +35,12 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
     const unsubTick = wsClient.subscribe<TickPayload>("tick", (payload) => {
       updateTick(payload);
+      updateLivePrice(payload);
       setConnected(true);
+    });
+
+    const unsubLiveTick = wsClient.subscribe<TickPayload>("live_tick", (payload) => {
+      updateLivePrice(payload);
     });
 
     const unsubPong = wsClient.subscribe("pong", () => {
@@ -51,11 +56,12 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       unsubExec();
       unsubBalance();
       unsubTick();
+      unsubLiveTick();
       unsubPong();
       clearInterval(pingInterval);
       wsClient.disconnect();
     };
-  }, [addSignal, addExecution, setBalance, updateTick]);
+  }, [addSignal, addExecution, setBalance, updateTick, updateLivePrice]);
 
   return <WsContext.Provider value={{ connected }}>{children}</WsContext.Provider>;
 }
