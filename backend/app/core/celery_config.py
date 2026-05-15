@@ -18,13 +18,13 @@ imports = [
     "app.tasks.strategy",
 ]
 
-task_default_queue = "default"
+task_default_queue = "trader_default"
 task_queues = (
-    Queue("default", queue_arguments={"x-max-priority": 0}),
-    Queue("strategy", queue_arguments={"x-max-priority": 3}),
+    Queue("trader_default", queue_arguments={"x-max-priority": 0}),
+    Queue("trader_strategy", queue_arguments={"x-max-priority": 3}),
 )
 
 task_routes = {
-    "app.tasks.strategy.*": {"queue": "strategy"},
-    "app.tasks.data_collector.*": {"queue": "default"},
+    "app.tasks.strategy.*": {"queue": "trader_strategy"},
+    "app.tasks.data_collector.*": {"queue": "trader_default"},
 }

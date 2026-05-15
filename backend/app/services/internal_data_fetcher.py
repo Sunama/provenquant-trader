@@ -38,7 +38,7 @@ class InternalDataFetcher:
             stmt = (
                 select(Tick)
                 .where(
-                    Tick.symbol == symbol,
+                    Tick.symbol == symbol.lower(),
                     Tick.timeframe == timeframe,
                     Tick.market_type == market_type,
                 )
