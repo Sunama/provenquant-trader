@@ -117,23 +117,24 @@ class GammaScalpingStrategy(StrategyExecuter):
 
     @property
     def subscriptions(self) -> list[Subscription]:
+        _desc = "BTC/USDT-M futures hedge leg — triggers delta-rebalance check on each 1m bar"
         if self.legs:
             return [
                 Subscription(
-                    symbol=l.symbol,
-                    timeframe=l.timeframe,
-                    exchange=l.exchange,
-                    market_type=l.market_type,
-                    tick_process=l.tick_process,
-                    subscribe_depth=l.subscribe_depth,
+                    symbol=self.legs[0].symbol,
+                    timeframe=self.legs[0].timeframe,
+                    exchange=self.legs[0].exchange,
+                    market_type=self.legs[0].market_type,
+                    tick_process=True,
+                    subscribe_depth=False,
+                    description=_desc,
                 )
-                for l in self.legs
             ]
         return [
             Subscription(
                 symbol="btcusdt", timeframe="1m",
                 exchange="binance", market_type="futures",
-                tick_process=True,
+                tick_process=True, description=_desc,
             )
         ]
 
@@ -395,6 +396,7 @@ class GammaScalpingStrategy(StrategyExecuter):
             price_method=PriceMethod.MARKET,
             price=tick.close,
             reason=f"Delta rebalance: opening {new_side} hedge (net_delta={net_delta_btc:+.5f} BTC)",
+            leverage=self.legs[leg_num].leverage,
         ))
 
         await context.redis.set_state(_K_HSIDE, new_side)

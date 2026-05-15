@@ -13,6 +13,21 @@ import { Breadcrumb } from "@/components/shared/Breadcrumb";
 import { formatPnl, formatPct } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
+const MARKET_TYPE_COLORS: Record<string, string> = {
+  spot:    "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+  futures: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+  options: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+};
+
+function MarketTypeBadge({ type }: { type?: string }) {
+  if (!type) return <span className="opacity-40">—</span>;
+  return (
+    <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium", MARKET_TYPE_COLORS[type] ?? "bg-muted text-muted-foreground")}>
+      {type}
+    </span>
+  );
+}
+
 const TRADE_TYPE_COLORS: Record<string, string> = {
   open_long: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
   close_long: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
@@ -176,12 +191,6 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
             {asset.role !== "primary" && (
               <span className="text-xs rounded-full bg-secondary text-secondary-foreground px-2 py-0.5">{asset.role}</span>
             )}
-            {asset.tick_process && (
-              <span className="text-xs rounded-full bg-primary/10 text-primary px-2 py-0.5">trigger</span>
-            )}
-            {asset.description && (
-              <span className="text-xs text-muted-foreground">— {asset.description}</span>
-            )}
           </div>
           <StrategyAssetChart
             strategyId={id}
@@ -278,6 +287,8 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
                   <th className="pb-2 text-left font-medium">Time</th>
                   <th className="pb-2 text-left font-medium">Type</th>
                   <th className="pb-2 text-left font-medium">Symbol</th>
+                  <th className="pb-2 text-left font-medium">Market</th>
+                  <th className="pb-2 text-left font-medium">Leverage</th>
                   <th className="pb-2 text-left font-medium">Price</th>
                   <th className="pb-2 text-left font-medium">Bought</th>
                   <th className="pb-2 text-left font-medium">Sold</th>
@@ -295,6 +306,10 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
                       <TradeTypeBadge type={th.trade_type} />
                     </td>
                     <td className="py-2 font-semibold uppercase">{th.symbol}</td>
+                    <td className="py-2"><MarketTypeBadge type={th.market_type} /></td>
+                    <td className="py-2 text-xs font-medium">
+                      {(th.leverage ?? 1) > 1 ? `${th.leverage}×` : <span className="opacity-40">—</span>}
+                    </td>
                     <td className="py-2">${th.exchange_rate.toLocaleString()}</td>
                     <td className="py-2 text-green-600 font-medium">
                       {th.bought_qty.toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
@@ -326,6 +341,8 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
               <thead>
                 <tr className="border-b text-xs text-muted-foreground">
                   <th className="pb-2 text-left font-medium">Asset</th>
+                  <th className="pb-2 text-left font-medium">Market</th>
+                  <th className="pb-2 text-left font-medium">Leverage</th>
                   <th className="pb-2 text-left font-medium">Side</th>
                   <th className="pb-2 text-left font-medium">Entry Price</th>
                   <th className="pb-2 text-left font-medium">Size</th>
@@ -352,6 +369,10 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
                   return (
                     <tr key={pos.id} className="border-b last:border-0">
                       <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
+                      <td className="py-2"><MarketTypeBadge type={pos.market_type} /></td>
+                      <td className="py-2 text-xs font-medium">
+                        {(pos.leverage ?? 1) > 1 ? `${pos.leverage}×` : <span className="opacity-40">—</span>}
+                      </td>
                       <td className={cn("py-2 font-semibold", isLong ? "text-green-600" : "text-red-500")}>
                         {pos.side.toUpperCase()}
                       </td>
@@ -422,6 +443,8 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
               <thead>
                 <tr className="border-b text-xs text-muted-foreground">
                   <th className="pb-2 text-left font-medium">Asset</th>
+                  <th className="pb-2 text-left font-medium">Market</th>
+                  <th className="pb-2 text-left font-medium">Leverage</th>
                   <th className="pb-2 text-left font-medium">Side</th>
                   <th className="pb-2 text-left font-medium">Entry</th>
                   <th className="pb-2 text-left font-medium">Exit</th>
@@ -434,6 +457,10 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
                 {closedPositions.map((pos) => (
                   <tr key={pos.id} className="border-b last:border-0">
                     <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
+                    <td className="py-2"><MarketTypeBadge type={pos.market_type} /></td>
+                    <td className="py-2 text-xs font-medium">
+                      {(pos.leverage ?? 1) > 1 ? `${pos.leverage}×` : <span className="opacity-40">—</span>}
+                    </td>
                     <td className={cn("py-2 font-semibold", pos.side === "long" ? "text-green-600" : "text-red-500")}>
                       {pos.side.toUpperCase()}
                     </td>
@@ -456,7 +483,7 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
               </tbody>
               <tfoot>
                 <tr className="border-t">
-                  <td colSpan={5} className="pt-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  <td colSpan={7} className="pt-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                     Total Realized P&L ({closedPositions.length} trades)
                   </td>
                   <td className={cn("pt-3 font-bold", totalRealizedPnl >= 0 ? "text-green-600" : "text-red-500")}>

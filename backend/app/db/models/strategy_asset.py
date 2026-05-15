@@ -13,7 +13,7 @@ class StrategyAsset(Base):
     One row per leg subscribed by a strategy.
     leg_num is the 0-based index used by LegOrder to reference this asset.
     role is a strategy-defined label (e.g. 'primary', 'hedge', 'anchor').
-    tick_process=True means receiving a tick for this leg triggers strategy execution.
+    tick_process and subscribe_depth are defined by the strategy class, not stored here.
     """
     __tablename__ = "strategy_assets"
 
@@ -28,8 +28,6 @@ class StrategyAsset(Base):
     exchange: Mapped[str] = mapped_column(sa.String(50), nullable=False)
     timeframe: Mapped[str] = mapped_column(sa.String(10), nullable=False)
     market_type: Mapped[str] = mapped_column(sa.String(20), nullable=False)
-    tick_process: Mapped[bool] = mapped_column(sa.Boolean, default=False)
-    subscribe_depth: Mapped[bool] = mapped_column(sa.Boolean, default=False)
     description: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     base_asset: Mapped[Optional[str]] = mapped_column(sa.String(20), nullable=True)
     quote_asset: Mapped[Optional[str]] = mapped_column(sa.String(20), nullable=True)

@@ -64,20 +64,22 @@ class RSIStrategy(StrategyExecuter):
 
     @property
     def subscriptions(self) -> list[Subscription]:
+        _desc = "Primary OHLCV bar feed — triggers RSI evaluation on each closed bar"
         if self.legs:
             return [
                 Subscription(
-                    symbol=l.symbol,
-                    timeframe=l.timeframe,
-                    exchange=l.exchange,
-                    market_type=l.market_type,
-                    tick_process=l.tick_process,
-                    subscribe_depth=l.subscribe_depth,
+                    symbol=self.legs[0].symbol,
+                    timeframe=self.legs[0].timeframe,
+                    exchange=self.legs[0].exchange,
+                    market_type=self.legs[0].market_type,
+                    tick_process=True,
+                    subscribe_depth=False,
+                    description=_desc,
                 )
-                for l in self.legs
             ]
         return [
-            Subscription(symbol="btcusdt", timeframe="30m", exchange="binance", market_type="futures", tick_process=True)
+            Subscription(symbol="btcusdt", timeframe="30m", exchange="binance",
+                         market_type="futures", tick_process=True, description=_desc)
         ]
 
     async def execute(self, context: StrategyContext) -> Optional[ExecutionPlan]:
@@ -148,6 +150,7 @@ class RSIStrategy(StrategyExecuter):
                 tp_pct=tp_pct,
                 sl_pct=sl_pct,
                 reason=f"RSI oversold: RSI={rsi:.1f} < {oversold}",
+                leverage=self.legs[leg_num].leverage,
             ))
             await context.redis.set_status("long")
             return ExecutionPlan(orders=orders)
@@ -175,6 +178,7 @@ class RSIStrategy(StrategyExecuter):
                 tp_pct=tp_pct,
                 sl_pct=sl_pct,
                 reason=f"RSI overbought: RSI={rsi:.1f} > {overbought}",
+                leverage=self.legs[leg_num].leverage,
             ))
             await context.redis.set_status("short")
             return ExecutionPlan(orders=orders)

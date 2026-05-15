@@ -34,20 +34,22 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
 
     @property
     def subscriptions(self) -> list[Subscription]:
+        _desc = "Primary OHLCV bar feed — switches between long and short on a fixed time period"
         if self.legs:
             return [
                 Subscription(
-                    symbol=l.symbol,
-                    timeframe=l.timeframe,
-                    exchange=l.exchange,
-                    market_type=l.market_type,
-                    tick_process=l.tick_process,
-                    subscribe_depth=l.subscribe_depth,
+                    symbol=self.legs[0].symbol,
+                    timeframe=self.legs[0].timeframe,
+                    exchange=self.legs[0].exchange,
+                    market_type=self.legs[0].market_type,
+                    tick_process=True,
+                    subscribe_depth=False,
+                    description=_desc,
                 )
-                for l in self.legs
             ]
         return [
-            Subscription(symbol="btcusdt", timeframe="1m", exchange="binance", market_type="futures", tick_process=True)
+            Subscription(symbol="btcusdt", timeframe="1m", exchange="binance",
+                         market_type="futures", tick_process=True, description=_desc)
         ]
 
     async def execute(self, context: StrategyContext) -> Optional[ExecutionPlan]:
@@ -78,6 +80,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     tp_pct=tp_pct,
                     sl_pct=sl_pct,
                     reason="Initial entry — no prior trades",
+                    leverage=self.legs[leg_num].leverage,
                 )
             ])
 
@@ -115,6 +118,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                             tp_pct=tp_pct,
                             sl_pct=sl_pct,
                             reason=f"Flipping long→short after {flip_label}",
+                            leverage=self.legs[leg_num].leverage,
                         ),
                     ])
                 else:
@@ -136,6 +140,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                             tp_pct=tp_pct,
                             sl_pct=sl_pct,
                             reason=f"Flipping short→long after {flip_label}",
+                            leverage=self.legs[leg_num].leverage,
                         ),
                     ])
 
@@ -177,6 +182,7 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     tp_pct=tp_pct,
                     sl_pct=sl_pct,
                     reason=f"Period switch: opening short after {elapsed_seconds:.0f}s",
+                    leverage=self.legs[leg_num].leverage,
                 ),
             ])
         else:  # open_short or close_long
@@ -198,5 +204,6 @@ class SwitchSideOnPeriodStrategy(StrategyExecuter):
                     tp_pct=tp_pct,
                     sl_pct=sl_pct,
                     reason=f"Period switch: opening long after {elapsed_seconds:.0f}s",
+                    leverage=self.legs[leg_num].leverage,
                 ),
             ])

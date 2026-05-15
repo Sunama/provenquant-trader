@@ -47,6 +47,7 @@ class TradeHistory(Base):
 
     exchange: Mapped[str] = mapped_column(sa.String(50), nullable=False)
     market_type: Mapped[str] = mapped_column(sa.String(20), nullable=False)
+    leverage: Mapped[float] = mapped_column(sa.Float, nullable=False, default=1.0)
 
     reason: Mapped[Optional[str]] = mapped_column(sa.String(500), nullable=True, default=None)
 

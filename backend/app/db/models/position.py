@@ -32,6 +32,7 @@ class Position(Base):
 
     is_open: Mapped[bool] = mapped_column(sa.Boolean, default=True)
     leverage: Mapped[float] = mapped_column(sa.Float, nullable=False, default=1.0)
+    market_type: Mapped[str] = mapped_column(sa.String(20), nullable=False, default="spot")
 
     created_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()

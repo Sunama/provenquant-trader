@@ -110,15 +110,23 @@ class StrategyExecuterManager:
                         exchange=a.exchange,
                         timeframe=a.timeframe,
                         market_type=a.market_type,
-                        tick_process=a.tick_process,
-                        subscribe_depth=a.subscribe_depth,
+                        tick_process=False,
+                        subscribe_depth=False,
                         base_asset=a.base_asset or "",
                         quote_asset=a.quote_asset or "",
                         exchange_account_num=a.exchange_account_num,
                         transaction_fee=a.transaction_fee,
+                        leverage=a.leverage,
                     )
                     for a in sorted(config.assets, key=lambda x: x.leg_num)
                 ]
+
+                # Override tick_process/subscribe_depth from strategy class — not user-configurable
+                probe = cls(params=config.params, legs=legs, config_id=config.id)
+                for i, sub in enumerate(probe.subscriptions):
+                    if i < len(legs):
+                        legs[i].tick_process = sub.tick_process
+                        legs[i].subscribe_depth = sub.subscribe_depth
 
                 entry = _StrategyEntry(
                     config_id=config.id,

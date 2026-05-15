@@ -136,7 +136,8 @@ class TradeExecuterProcess:
                     logger.warning(f"Could not resolve leg_num={order.leg_num} for config={config_id}")
                     continue
 
-                symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee, leverage = leg_meta
+                symbol, timeframe, market_type, base_asset, quote_asset, transaction_fee, asset_leverage = leg_meta
+                effective_leverage = order.leverage if order.leverage is not None else asset_leverage
                 price = order.price if order.price else tick_close
 
                 await self._execute_order(
@@ -150,7 +151,7 @@ class TradeExecuterProcess:
                     signal_price=price,
                     transaction_fee=transaction_fee,
                     account_base=account_base,
-                    leverage=leverage,
+                    leverage=effective_leverage,
                 )
                 executed_count += 1
 

@@ -59,6 +59,7 @@ class StrategyLeg:
     quote_asset: str = ""
     exchange_account_num: int = 0   # links to StrategyExchangeRef.exchange_num
     transaction_fee: float = 0.0002  # fractional fee per trade (e.g. 0.0002 = 0.02%)
+    leverage: float = 1.0
 
 
 @dataclass
@@ -93,6 +94,7 @@ class LegOrder:
     sl_pct: Optional[float] = None
     metadata: dict = field(default_factory=dict)
     reason: Optional[str] = None
+    leverage: Optional[float] = None  # None = use StrategyAsset.leverage from DB
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +109,7 @@ class LegOrder:
             "sl_pct": self.sl_pct,
             "metadata": self.metadata,
             "reason": self.reason,
+            "leverage": self.leverage,
         }
 
     @classmethod
@@ -123,6 +126,7 @@ class LegOrder:
             sl_pct=float(d["sl_pct"]) if d.get("sl_pct") is not None else None,
             metadata=d.get("metadata", {}),
             reason=d.get("reason") or None,
+            leverage=float(d["leverage"]) if d.get("leverage") is not None else None,
         )
 
 

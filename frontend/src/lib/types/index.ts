@@ -5,12 +5,9 @@ export interface StrategyAsset {
   exchange: string;
   timeframe: string;
   market_type: "spot" | "futures" | "options";
-  tick_process: boolean;
-  subscribe_depth: boolean;
   exchange_account_num: number;
   base_asset?: string;
   quote_asset?: string;
-  description?: string;
   transaction_fee?: number;
   leverage?: number;
 }
@@ -81,6 +78,8 @@ export interface Position {
   pnl?: number;
   pnl_pct?: number;
   is_open: boolean;
+  leverage?: number;
+  market_type?: string;
   created_at?: string;
 }
 
@@ -169,6 +168,7 @@ export interface TradeHistory {
   fee_asset: string;
   exchange: string;
   market_type: string;
+  leverage?: number;
   reason?: string;
   created_at?: string;
 }

@@ -53,22 +53,29 @@ class PairTradeStrategy(StrategyExecuter):
 
     @property
     def subscriptions(self) -> list[Subscription]:
+        _descs = [
+            "Primary leg — triggers execution on each closed bar; long when BTC/ETH ratio is low",
+            "Counter leg — moves inversely to primary; short when primary is long",
+        ]
         if self.legs:
+            _tick = [True, False]
             return [
                 Subscription(
                     symbol=l.symbol,
                     timeframe=l.timeframe,
                     exchange=l.exchange,
                     market_type=l.market_type,
-                    tick_process=l.tick_process,
+                    tick_process=_tick[i] if i < len(_tick) else False,
+                    subscribe_depth=False,
+                    description=_descs[i] if i < len(_descs) else "",
                 )
-                for l in self.legs
+                for i, l in enumerate(self.legs)
             ]
         return [
-            Subscription(symbol="btcusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=True,
-                         description="Primary — triggers execution; long when ratio is low"),
-            Subscription(symbol="ethusdt", timeframe="1h", exchange="binance", market_type="futures", tick_process=False,
-                         description="Counter — moves inversely to primary; short when primary is long"),
+            Subscription(symbol="btcusdt", timeframe="1h", exchange="binance",
+                         market_type="futures", tick_process=True, description=_descs[0]),
+            Subscription(symbol="ethusdt", timeframe="1h", exchange="binance",
+                         market_type="futures", tick_process=False, description=_descs[1]),
         ]
 
     async def execute(self, context: StrategyContext) -> Optional[ExecutionPlan]:
@@ -110,11 +117,13 @@ class PairTradeStrategy(StrategyExecuter):
                 LegOrder(leg_num=0, action=SignalAction.OPEN_LONG, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                          price_method=PriceMethod.MARKET, price=tick.close,
-                         reason=f"z-score={z:.2f} < -{z_threshold}: BTC cheap vs ETH — long BTC"),
+                         reason=f"z-score={z:.2f} < -{z_threshold}: BTC cheap vs ETH — long BTC",
+                         leverage=self.legs[0].leverage),
                 LegOrder(leg_num=1, action=SignalAction.OPEN_SHORT, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                          price_method=PriceMethod.MARKET,
-                         reason=f"z-score={z:.2f} < -{z_threshold}: BTC cheap vs ETH — short ETH"),
+                         reason=f"z-score={z:.2f} < -{z_threshold}: BTC cheap vs ETH — short ETH",
+                         leverage=self.legs[1].leverage),
             ])
         else:
             # BTC is expensive relative to ETH: short BTC, long ETH
@@ -122,9 +131,11 @@ class PairTradeStrategy(StrategyExecuter):
                 LegOrder(leg_num=0, action=SignalAction.OPEN_SHORT, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                          price_method=PriceMethod.MARKET, price=tick.close,
-                         reason=f"z-score={z:.2f} > +{z_threshold}: BTC expensive vs ETH — short BTC"),
+                         reason=f"z-score={z:.2f} > +{z_threshold}: BTC expensive vs ETH — short BTC",
+                         leverage=self.legs[0].leverage),
                 LegOrder(leg_num=1, action=SignalAction.OPEN_LONG, amount=amount,
                          amount_mode=AmountMode.PORTFOLIO_PCT_REALIZED,
                          price_method=PriceMethod.MARKET,
-                         reason=f"z-score={z:.2f} > +{z_threshold}: BTC expensive vs ETH — long ETH"),
+                         reason=f"z-score={z:.2f} > +{z_threshold}: BTC expensive vs ETH — long ETH",
+                         leverage=self.legs[1].leverage),
             ])

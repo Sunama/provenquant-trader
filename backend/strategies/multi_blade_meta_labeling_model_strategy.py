@@ -56,8 +56,8 @@ _K_TP_PCT    = "mb_tp_pct"      # tp_pct stored when opening (for TP/SL check)
 _K_SL_PCT    = "mb_sl_pct"      # sl_pct stored when opening (for TP/SL check)
 
 # A prediction is considered "fresh" if the current time is within this window
-# of its bar time (signals come from 1m bars, ~1–2 bar lag is normal)
-_MAX_SIGNAL_AGE_MS = 2 * 60 * 1000  # 2 minutes
+# of its bar time (signals come from 1m bars, ~1–5 bar lag is normal)
+_MAX_SIGNAL_AGE_MS = 5 * 60 * 1000  # 5 minutes
 
 _PQ_URL = "https://www.provenquant.com/api/assets/{symbol}/ml-predictions?timeframe=30m&days_back=7"
 
@@ -121,23 +121,24 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
 
     @property
     def subscriptions(self) -> list[Subscription]:
+        _desc = "Primary 1m bar feed — catches ML prediction signals within their ~5-minute validity window"
         if self.legs:
             return [
                 Subscription(
-                    symbol=l.symbol,
-                    timeframe=l.timeframe,
-                    exchange=l.exchange,
-                    market_type=l.market_type,
-                    tick_process=l.tick_process,
-                    subscribe_depth=l.subscribe_depth,
+                    symbol=self.legs[0].symbol,
+                    timeframe=self.legs[0].timeframe,
+                    exchange=self.legs[0].exchange,
+                    market_type=self.legs[0].market_type,
+                    tick_process=True,
+                    subscribe_depth=False,
+                    description=_desc,
                 )
-                for l in self.legs
             ]
         return [
             Subscription(
                 symbol="btcusdt", timeframe="1m",
                 exchange="binance", market_type="futures",
-                tick_process=True,
+                tick_process=True, description=_desc,
             )
         ]
 
@@ -254,6 +255,7 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
                 tp_pct=tp_pct,
                 sl_pct=sl_pct,
                 reason=open_reason,
+                leverage=self.legs[leg_num].leverage,
             )
         ])
 

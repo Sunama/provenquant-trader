@@ -36,6 +36,8 @@ def _serialize(r: Position) -> dict:
         "pnl": r.pnl,
         "pnl_pct": r.pnl_pct,
         "is_open": r.is_open,
+        "leverage": r.leverage,
+        "market_type": r.market_type,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
 

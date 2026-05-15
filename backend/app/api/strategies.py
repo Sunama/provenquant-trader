@@ -41,11 +41,8 @@ class StrategyAssetIn(BaseModel):
     exchange: str
     timeframe: str
     market_type: str
-    tick_process: bool = False
     role: str = "primary"
-    subscribe_depth: bool = False
     exchange_account_num: int = 0
-    description: Optional[str] = None
     transaction_fee: float = 0.0002
     leverage: float = 1.0
 
@@ -105,10 +102,7 @@ def _serialize(config: StrategyConfig) -> dict:
                 "exchange": a.exchange,
                 "timeframe": a.timeframe,
                 "market_type": a.market_type,
-                "tick_process": a.tick_process,
-                "subscribe_depth": a.subscribe_depth,
                 "exchange_account_num": a.exchange_account_num,
-                "description": a.description,
                 "base_asset": a.base_asset,
                 "quote_asset": a.quote_asset,
                 "transaction_fee": a.transaction_fee,
@@ -308,10 +302,7 @@ async def create_strategy(body: StrategyConfigCreate, db: AsyncSession = Depends
             exchange=asset_in.exchange,
             timeframe=asset_in.timeframe,
             market_type=asset_in.market_type,
-            tick_process=asset_in.tick_process,
-            subscribe_depth=asset_in.subscribe_depth,
             exchange_account_num=asset_in.exchange_account_num,
-            description=asset_in.description,
             base_asset=base_asset,
             quote_asset=quote_asset,
             transaction_fee=asset_in.transaction_fee,
@@ -379,10 +370,7 @@ async def update_strategy(strategy_id: str, body: StrategyConfigUpdate, db: Asyn
                 exchange=asset_in.exchange,
                 timeframe=asset_in.timeframe,
                 market_type=asset_in.market_type,
-                tick_process=asset_in.tick_process,
-                subscribe_depth=asset_in.subscribe_depth,
                 exchange_account_num=asset_in.exchange_account_num,
-                description=asset_in.description,
                 base_asset=base_asset,
                 quote_asset=quote_asset,
                 transaction_fee=asset_in.transaction_fee,

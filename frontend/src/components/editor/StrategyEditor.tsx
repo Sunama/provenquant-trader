@@ -202,9 +202,7 @@ export function StrategyEditor({ initial }: Props) {
                         exchange: s.exchange,
                         timeframe: s.timeframe,
                         market_type: s.market_type as StrategyAsset["market_type"],
-                        tick_process: s.tick_process,
                         role: s.role ?? "primary",
-                        subscribe_depth: s.subscribe_depth ?? false,
                         exchange_account_num: 0,
                         transaction_fee: 0.0002,
                         leverage: 1,
@@ -301,7 +299,7 @@ export function StrategyEditor({ initial }: Props) {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Assets</h2>
           <button
             type="button"
-            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", tick_process: prev.length === 0, role: "primary", subscribe_depth: false, exchange_account_num: 0, transaction_fee: 0.0002, leverage: 1 }])}
+            onClick={() => setAssets((prev) => [...prev, { symbol: "", exchange: "binance", timeframe: "1m", market_type: "futures", role: "primary", exchange_account_num: 0, transaction_fee: 0.0002, leverage: 1 }])}
             className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
           >
             <Plus className="h-3 w-3" />
@@ -420,24 +418,6 @@ export function StrategyEditor({ initial }: Props) {
                     />
                   </div>
                 )}
-              </div>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={asset.tick_process}
-                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, tick_process: e.target.checked } : a))}
-                  />
-                  Tick trigger (receiving this asset&apos;s tick triggers strategy execution)
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={asset.subscribe_depth}
-                    onChange={(e) => setAssets((prev) => prev.map((a, j) => j === i ? { ...a, subscribe_depth: e.target.checked } : a))}
-                  />
-                  Subscribe order book depth
-                </label>
               </div>
             </div>
           );
