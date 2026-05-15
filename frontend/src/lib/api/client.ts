@@ -1,16 +1,31 @@
 function resolveBase(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return `${process.env.NEXT_PUBLIC_API_URL}/api`;
-  if (typeof window !== "undefined") return `${window.location.protocol}//${window.location.hostname}:8001/api`;
+  if (typeof window !== "undefined")
+    return `${window.location.protocol}//${window.location.hostname}:8001/api`;
   return "/api";
 }
 
 const BASE = resolveBase();
 
+function getApiKey(): string {
+  if (typeof document === "undefined") return "";
+  const match = document.cookie.match(/(?:^|;\s*)api_key=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function authHeader(): Record<string, string> {
+  const key = getApiKey();
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...authHeader(), ...init?.headers },
     ...init,
   });
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.location.href = "/auth";
+    return undefined as T;
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`${res.status}: ${text}`);

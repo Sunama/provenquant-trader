@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "ProvenQuant Trader"
     API_STR: str = "/api"
 
-    SERVER_SECRET: str
+    API_KEY: str          # Bearer token for API auth (user enters this in browser)
+    SERVER_SECRET: str    # pgp_sym_encrypt key for exchange credentials (backend only)
 
     # Database
     POSTGRES_PASSWORD: str

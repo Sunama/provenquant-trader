@@ -13,8 +13,10 @@ RUN npm install
 COPY frontend/ .
 ARG NEXT_PUBLIC_API_URL=http://localhost:8001
 ARG NEXT_PUBLIC_WS_URL=ws://localhost:8001/ws
+ARG NEXT_PUBLIC_API_KEY=changeme
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+ENV NEXT_PUBLIC_API_KEY=$NEXT_PUBLIC_API_KEY
 RUN npm run build && mkdir -p public
 
 # ─── Production (standalone, minimal image) ───────────────────

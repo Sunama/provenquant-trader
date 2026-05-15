@@ -1,7 +1,8 @@
 from fastapi import APIRouter
-from app.api import trades, positions, strategies, exchange_accounts, watched_assets, market_data, settings, ws, trade_history
+from app.api import trades, positions, strategies, exchange_accounts, watched_assets, market_data, settings, ws, trade_history, auth
 
 api_router = APIRouter()
+api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(trades.router, prefix="/trades", tags=["trades"])
 api_router.include_router(positions.router, prefix="/positions", tags=["positions"])
 api_router.include_router(strategies.router, prefix="/strategies", tags=["strategies"])

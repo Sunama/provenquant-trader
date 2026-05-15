@@ -82,6 +82,7 @@ else
     # Generate random secrets so users don't have to
     gen_secret() { openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32; }
 
+    API_KEY=$(gen_secret)
     SERVER_SECRET=$(gen_secret)
     POSTGRES_PASSWORD=$(gen_secret)
     TRADER_POSTGRES_PASSWORD=$(gen_secret)
@@ -89,6 +90,7 @@ else
     RABBITMQ_PASSWORD=$(gen_secret)
 
     # Substitute generated values into .env
+    sed -i "s/^API_KEY=.*/API_KEY=${API_KEY}/" .env
     sed -i "s/^SERVER_SECRET=.*/SERVER_SECRET=${SERVER_SECRET}/" .env
     sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${POSTGRES_PASSWORD}/" .env
     sed -i "s/^TRADER_POSTGRES_PASSWORD=.*/TRADER_POSTGRES_PASSWORD=${TRADER_POSTGRES_PASSWORD}/" .env
@@ -105,6 +107,29 @@ else
         success "ProvenQuant API key saved"
     else
         info "Running in standalone mode (no ProvenQuant integration)"
+    fi
+
+    # Production: ask for CORS origins so the real domain is locked down from the start
+    if [ "$PROD_MODE" = true ]; then
+        echo ""
+        ask "  Enter allowed CORS origins (comma-separated, e.g. https://yourdomain.com):"
+        ask "  Press Enter to keep [\"*\"] (not recommended for production):"
+        read -r CORS_INPUT
+        if [ -n "$CORS_INPUT" ]; then
+            # Build JSON array from comma-separated input
+            CORS_JSON=$(echo "$CORS_INPUT" | awk -F',' '{
+                printf "[";
+                for(i=1;i<=NF;i++){
+                    gsub(/^[[:space:]]+|[[:space:]]+$/,"",$i);
+                    printf "\"%s\"%s",$i,(i<NF?",":"");
+                }
+                printf "]"
+            }')
+            sed -i "s|^BACKEND_CORS_ORIGINS=.*|BACKEND_CORS_ORIGINS=${CORS_JSON}|" .env
+            success "CORS origins set to: ${CORS_JSON}"
+        else
+            warn "Keeping BACKEND_CORS_ORIGINS=[\"*\"] — consider restricting this for production"
+        fi
     fi
 fi
 

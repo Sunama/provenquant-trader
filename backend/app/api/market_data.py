@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
+from app.core.limiter import limiter
 from app.services.internal_data_fetcher import InternalDataFetcher
 
 router = APIRouter()
@@ -9,7 +10,9 @@ _fetcher = InternalDataFetcher()
 
 
 @router.get("/klines")
+@limiter.limit("60/minute")
 async def get_klines(
+    request: Request,
     symbol: str,
     timeframe: str,
     exchange: str = "binance",
@@ -29,7 +32,9 @@ async def get_klines(
 
 
 @router.get("/funding-rates")
+@limiter.limit("30/minute")
 async def get_funding_rates(
+    request: Request,
     symbol: str,
     exchange: str = "binance",
     market_type: str = "futures",
@@ -43,7 +48,9 @@ async def get_funding_rates(
 
 
 @router.get("/mark-prices")
+@limiter.limit("60/minute")
 async def get_mark_prices(
+    request: Request,
     symbol: str,
     exchange: str = "binance",
     market_type: str = "futures",
@@ -57,7 +64,9 @@ async def get_mark_prices(
 
 
 @router.get("/open-interest")
+@limiter.limit("30/minute")
 async def get_open_interest(
+    request: Request,
     symbol: str,
     exchange: str = "binance",
     market_type: str = "futures",
@@ -71,7 +80,13 @@ async def get_open_interest(
 
 
 @router.get("/orderbook")
-async def get_orderbook(symbol: str, exchange: str = "binance", market_type: str = "futures"):
+@limiter.limit("120/minute")
+async def get_orderbook(
+    request: Request,
+    symbol: str,
+    exchange: str = "binance",
+    market_type: str = "futures",
+):
     data = await _fetcher.get_orderbook(symbol, exchange, market_type)
     if not data:
         return {"bids": [], "asks": [], "time": None}
