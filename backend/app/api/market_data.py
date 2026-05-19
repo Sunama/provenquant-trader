@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Optional
+
 from fastapi import APIRouter, Query, Request
 
 from app.core.limiter import limiter
@@ -18,8 +21,10 @@ async def get_klines(
     exchange: str = "binance",
     market_type: str = "futures",
     limit: int = Query(default=200, le=1000),
+    end_time: Optional[int] = Query(default=None, description="Exclusive upper bound as Unix ms"),
 ):
-    ticks = await _fetcher.get_klines(symbol, timeframe, exchange, market_type, limit)
+    before = datetime.fromtimestamp(end_time / 1000, tz=timezone.utc) if end_time is not None else None
+    ticks = await _fetcher.get_klines(symbol, timeframe, exchange, market_type, limit, before)
     return [
         {
             "time": int(t.time.timestamp() * 1000),

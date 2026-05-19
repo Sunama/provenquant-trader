@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -95,6 +96,7 @@ class LegOrder:
     metadata: dict = field(default_factory=dict)
     reason: Optional[str] = None
     leverage: Optional[float] = None  # None = use StrategyAsset.leverage from DB
+    timeout: Optional[datetime] = None  # UTC; position is auto-closed after this time
 
     def to_dict(self) -> dict:
         return {
@@ -110,6 +112,7 @@ class LegOrder:
             "metadata": self.metadata,
             "reason": self.reason,
             "leverage": self.leverage,
+            "timeout": self.timeout.isoformat() if self.timeout else None,
         }
 
     @classmethod
@@ -127,6 +130,7 @@ class LegOrder:
             metadata=d.get("metadata", {}),
             reason=d.get("reason") or None,
             leverage=float(d["leverage"]) if d.get("leverage") is not None else None,
+            timeout=datetime.fromisoformat(d["timeout"]) if d.get("timeout") else None,
         )
 
 

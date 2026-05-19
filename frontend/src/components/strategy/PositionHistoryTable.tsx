@@ -16,6 +16,14 @@ function MarketTypeBadge({ type }: { type?: string }) {
   );
 }
 
+function formatDateShort(iso?: string | null) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
 interface Props {
   positions: Position[];
 }
@@ -37,7 +45,9 @@ export function PositionHistoryTable({ positions }: Props) {
                 <th className="pb-2 text-left font-medium">Leverage</th>
                 <th className="pb-2 text-left font-medium">Side</th>
                 <th className="pb-2 text-left font-medium">Entry</th>
+                <th className="pb-2 text-left font-medium">Open Time</th>
                 <th className="pb-2 text-left font-medium">Exit</th>
+                <th className="pb-2 text-left font-medium">Close Time</th>
                 <th className="pb-2 text-left font-medium">Entry Reason</th>
                 <th className="pb-2 text-left font-medium">Realized P&L</th>
                 <th className="pb-2 text-left font-medium">Exit Reason</th>
@@ -48,14 +58,18 @@ export function PositionHistoryTable({ positions }: Props) {
                 <tr key={pos.id} className="border-b last:border-0">
                   <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
                   <td className="py-2"><MarketTypeBadge type={pos.market_type} /></td>
-                  <td className="py-2 text-xs font-medium">
-                    {(pos.leverage ?? 1) > 1 ? `${pos.leverage}×` : <span className="opacity-40">—</span>}
-                  </td>
+                  <td className="py-2 text-xs font-medium">{pos.leverage ?? 1}×</td>
                   <td className={cn("py-2 font-semibold", pos.side === "long" ? "text-green-600" : "text-red-500")}>
                     {pos.side.toUpperCase()}
                   </td>
                   <td className="py-2">${pos.entry_price.toLocaleString()}</td>
+                  <td className="py-2 text-xs text-muted-foreground whitespace-nowrap">
+                    {formatDateShort(pos.entry_time) ?? <span className="opacity-40">—</span>}
+                  </td>
                   <td className="py-2">{pos.exit_price != null ? `$${pos.exit_price.toLocaleString()}` : "—"}</td>
+                  <td className="py-2 text-xs text-muted-foreground whitespace-nowrap">
+                    {formatDateShort(pos.exit_time) ?? <span className="opacity-40">—</span>}
+                  </td>
                   <td className="py-2 text-xs text-muted-foreground max-w-[200px]">
                     {pos.entry_reason ?? <span className="opacity-40">—</span>}
                   </td>
@@ -73,7 +87,7 @@ export function PositionHistoryTable({ positions }: Props) {
             </tbody>
             <tfoot>
               <tr className="border-t">
-                <td colSpan={7} className="pt-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                <td colSpan={9} className="pt-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Total Realized P&L ({positions.length} trades)
                 </td>
                 <td className={cn("pt-3 font-bold", totalPnl >= 0 ? "text-green-600" : "text-red-500")}>

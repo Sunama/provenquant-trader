@@ -54,6 +54,8 @@ export const positions = {
   get: (id: number) => api.get<Position>(`/positions/${id}`),
   stats: (strategyId?: string) =>
     api.get<PositionStats>(`/positions/stats${strategyId ? `?strategy_id=${strategyId}` : ""}`),
+  close: (id: number, price: number) =>
+    api.post<Position>(`/positions/${id}/close`, { price }),
 };
 
 // ── Exchange Accounts ─────────────────────────────────────
@@ -78,7 +80,7 @@ export const watchedAssets = {
 // ── Market Data ───────────────────────────────────────────
 
 export const marketData = {
-  klines: (params: { symbol: string; timeframe: string; exchange?: string; market_type?: string; limit?: number }) => {
+  klines: (params: { symbol: string; timeframe: string; exchange?: string; market_type?: string; limit?: number; end_time?: number }) => {
     const q = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])

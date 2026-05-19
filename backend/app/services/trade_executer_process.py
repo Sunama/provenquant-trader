@@ -103,10 +103,7 @@ class TradeExecuterProcess:
     async def _handle_message(self, msg_id: str, fields: dict) -> None:
         try:
             ts = float(fields.get("ts", 0))
-            if time.time() - ts > _MAX_SIGNAL_AGE_SECONDS:
-                logger.warning(f"Discarding stale signal {msg_id} (age={(time.time()-ts):.1f}s)")
-                await self._redis.xack(_STREAM_KEY, _GROUP_NAME, msg_id)
-                return
+            age = time.time() - ts
 
             config_id = fields.get("config_id", "")
             strategy_id = fields.get("strategy_id", config_id)
@@ -119,6 +116,14 @@ class TradeExecuterProcess:
                 orders_data: list[dict] = json.loads(raw_orders)
             except json.JSONDecodeError:
                 logger.warning(f"Invalid orders JSON in message {msg_id}")
+                await self._redis.xack(_STREAM_KEY, _GROUP_NAME, msg_id)
+                return
+
+            # Never discard close orders — they must execute even after a restart.
+            # Only stale-drop open orders, where acting on an old entry signal is harmful.
+            has_close = any(o.get("action", "").startswith("close_") for o in orders_data)
+            if not has_close and age > _MAX_SIGNAL_AGE_SECONDS:
+                logger.warning(f"Discarding stale open signal {msg_id} (age={age:.1f}s)")
                 await self._redis.xack(_STREAM_KEY, _GROUP_NAME, msg_id)
                 return
 
@@ -339,6 +344,7 @@ class TradeExecuterProcess:
             sl_price=sl_price,
             price_method=order.price_method,
             leverage=leverage,
+            timeout=order.timeout,
         )
 
         notional = result.size * result.price
@@ -357,6 +363,8 @@ class TradeExecuterProcess:
                 tp_price=tp_price,
                 sl_price=sl_price,
                 entry_reason=order.reason,
+                market_type=market_type,
+                timeout=order.timeout,
             )
             db.add(pos)
 
@@ -376,6 +384,7 @@ class TradeExecuterProcess:
                 fee_asset=quote_asset,
                 exchange="binance",
                 market_type=market_type,
+                leverage=leverage,
                 reason=order.reason,
             )
             db.add(th)
@@ -451,6 +460,7 @@ class TradeExecuterProcess:
                     fee_asset=quote_asset,
                     exchange="binance",
                     market_type=market_type,
+                    leverage=row.leverage,
                     reason=reason,
                 )
                 db.add(th)

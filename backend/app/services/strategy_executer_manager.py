@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.settings import settings
 import app.db.base  # noqa: F401 — registers all ORM models so relationships resolve
+from app.db.models.position import Position
 from app.db.models.strategy_config import StrategyConfig
 from app.db.session import SessionLocal
 from app.services.data_fetcher import DataFetcher, Subscription, TickCallback, TickData
@@ -250,21 +251,36 @@ class StrategyExecuterManager:
 
     async def _check_tp_sl(self, tick: TickData, config_id: str, leg_num: int, is_paper: bool) -> None:
         """Publish a CLOSE order to signals:trade if current price breaches TP or SL."""
-        if not is_paper:
-            return
+        if is_paper:
+            redis_key = f"paper:{config_id}:position:{tick.symbol}"
+            raw = await self._redis.get(redis_key)
+            if not raw:
+                return
+            pos_dict = json.loads(raw)
+        else:
+            async with SessionLocal() as db:
+                result = await db.execute(
+                    select(Position).where(
+                        Position.strategy_id == config_id,
+                        Position.symbol == tick.symbol,
+                        Position.is_open == True,
+                    )
+                )
+                live_pos = result.scalar_one_or_none()
+                if not live_pos:
+                    return
+                pos_dict = {
+                    "tp_price": live_pos.tp_price,
+                    "sl_price": live_pos.sl_price,
+                    "side": live_pos.side,
+                }
 
-        redis_key = f"paper:{config_id}:position:{tick.symbol}"
-        raw = await self._redis.get(redis_key)
-        if not raw:
-            return
-
-        pos = json.loads(raw)
-        tp: float | None = pos.get("tp_price")
-        sl: float | None = pos.get("sl_price")
+        tp: float | None = pos_dict.get("tp_price")
+        sl: float | None = pos_dict.get("sl_price")
         if tp is None and sl is None:
             return
 
-        side: str = pos["side"]
+        side: str = pos_dict["side"]
         price = tick.close
 
         hit_tp = tp is not None and ((side == "long" and price >= tp) or (side == "short" and price <= tp))

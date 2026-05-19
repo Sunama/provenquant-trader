@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { cn, formatPnl, formatPct } from "@/lib/utils";
 import type { Position } from "@/lib/types";
 
@@ -16,13 +19,36 @@ function MarketTypeBadge({ type }: { type?: string }) {
   );
 }
 
+function formatDateShort(iso?: string) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
 interface Props {
   positions: Position[];
   getLivePrice: (symbol: string) => number | null;
+  onClose?: (posId: number, price: number) => Promise<void>;
 }
 
-export function OpenPositionsTable({ positions, getLivePrice }: Props) {
+export function OpenPositionsTable({ positions, getLivePrice, onClose }: Props) {
+  const [closing, setClosing] = useState<number | null>(null);
+
   if (positions.length === 0) return null;
+
+  async function handleClose(pos: Position) {
+    if (!onClose) return;
+    const price = getLivePrice(pos.symbol) ?? pos.entry_price;
+    setClosing(pos.id);
+    try {
+      await onClose(pos.id, price);
+    } finally {
+      setClosing(null);
+    }
+  }
+
   return (
     <div className="rounded-lg border bg-card p-5">
       <p className="mb-3 text-sm font-semibold">Open Positions</p>
@@ -34,12 +60,15 @@ export function OpenPositionsTable({ positions, getLivePrice }: Props) {
               <th className="pb-2 text-left font-medium">Market</th>
               <th className="pb-2 text-left font-medium">Leverage</th>
               <th className="pb-2 text-left font-medium">Side</th>
+              <th className="pb-2 text-left font-medium">Open Time</th>
               <th className="pb-2 text-left font-medium">Entry Price</th>
               <th className="pb-2 text-left font-medium">Size</th>
               <th className="pb-2 text-left font-medium">TP</th>
               <th className="pb-2 text-left font-medium">SL</th>
+              <th className="pb-2 text-left font-medium">Timeout</th>
               <th className="pb-2 text-left font-medium">Entry Reason</th>
               <th className="pb-2 text-left font-medium">Unrealized P&L</th>
+              {onClose && <th className="pb-2 text-left font-medium">Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -56,15 +85,19 @@ export function OpenPositionsTable({ positions, getLivePrice }: Props) {
                 unrealizedPnl != null && pos.entry_price > 0 && pos.size > 0
                   ? unrealizedPnl / (pos.entry_price * pos.size)
                   : null;
+              const timeoutLabel = pos.timeout ? formatDateShort(pos.timeout) : null;
+              const isExpired = pos.timeout ? new Date(pos.timeout) <= new Date() : false;
+
               return (
                 <tr key={pos.id} className="border-b last:border-0">
                   <td className="py-2 uppercase font-semibold">{pos.symbol}</td>
                   <td className="py-2"><MarketTypeBadge type={pos.market_type} /></td>
-                  <td className="py-2 text-xs font-medium">
-                    {(pos.leverage ?? 1) > 1 ? `${pos.leverage}×` : <span className="opacity-40">—</span>}
-                  </td>
+                  <td className="py-2 text-xs font-medium">{pos.leverage ?? 1}×</td>
                   <td className={cn("py-2 font-semibold", isLong ? "text-green-600" : "text-red-500")}>
                     {pos.side.toUpperCase()}
+                  </td>
+                  <td className="py-2 text-xs text-muted-foreground whitespace-nowrap">
+                    {formatDateShort(pos.entry_time) ?? <span className="opacity-40">—</span>}
                   </td>
                   <td className="py-2">${pos.entry_price.toLocaleString()}</td>
                   <td className="py-2 text-muted-foreground">{pos.size}</td>
@@ -96,6 +129,16 @@ export function OpenPositionsTable({ positions, getLivePrice }: Props) {
                       <span className="opacity-40">—</span>
                     )}
                   </td>
+                  <td className="py-2 text-xs whitespace-nowrap">
+                    {timeoutLabel ? (
+                      <span className={cn("font-medium", isExpired ? "text-red-500" : "text-muted-foreground")}>
+                        {timeoutLabel}
+                        {isExpired && <span className="ml-1 text-red-500">(expired)</span>}
+                      </span>
+                    ) : (
+                      <span className="opacity-40">—</span>
+                    )}
+                  </td>
                   <td className="py-2 text-xs text-muted-foreground max-w-[220px]">
                     {pos.entry_reason ?? <span className="opacity-40">—</span>}
                   </td>
@@ -114,6 +157,17 @@ export function OpenPositionsTable({ positions, getLivePrice }: Props) {
                       <span className="text-xs text-muted-foreground">Waiting for price…</span>
                     )}
                   </td>
+                  {onClose && (
+                    <td className="py-2">
+                      <button
+                        onClick={() => handleClose(pos)}
+                        disabled={closing === pos.id}
+                        className="text-xs px-2 py-1 rounded border border-red-300 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {closing === pos.id ? "Closing…" : "Close"}
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}

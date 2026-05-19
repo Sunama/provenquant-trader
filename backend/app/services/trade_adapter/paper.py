@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import redis.asyncio as aioredis
 
@@ -105,13 +105,14 @@ class PaperTradeAdapter(TradeAdapter):
         sl_price: Optional[float] = None,
         price_method: PriceMethod = PriceMethod.MARKET,
         leverage: float = 1.0,
+        timeout: Optional[datetime] = None,
     ) -> OrderResult:
         order_id = str(uuid.uuid4())
 
         if price_method == PriceMethod.LIMIT:
-            return await self._place_limit_order(symbol, side, size, price, tp_price, sl_price, order_id, leverage)
+            return await self._place_limit_order(symbol, side, size, price, tp_price, sl_price, order_id, leverage, timeout)
 
-        return await self._fill_immediately(symbol, side, size, price, tp_price, sl_price, order_id, leverage)
+        return await self._fill_immediately(symbol, side, size, price, tp_price, sl_price, order_id, leverage, timeout)
 
     async def _fill_immediately(
         self,
@@ -123,6 +124,7 @@ class PaperTradeAdapter(TradeAdapter):
         sl_price: Optional[float],
         order_id: str,
         leverage: float = 1.0,
+        timeout: Optional[datetime] = None,
     ) -> OrderResult:
         r = await self._get_redis()
         await self._seed_if_empty()
@@ -144,6 +146,7 @@ class PaperTradeAdapter(TradeAdapter):
             "entry_time": datetime.now(timezone.utc).isoformat(),
             "tp_price": tp_price,
             "sl_price": sl_price,
+            "timeout": timeout.isoformat() if timeout else None,
         }
         await r.set(self._position_key(symbol), json.dumps(position))
 
@@ -167,6 +170,7 @@ class PaperTradeAdapter(TradeAdapter):
         sl_price: Optional[float],
         order_id: str,
         leverage: float = 1.0,
+        timeout: Optional[datetime] = None,
     ) -> OrderResult:
         r = await self._get_redis()
         order = {
@@ -178,6 +182,7 @@ class PaperTradeAdapter(TradeAdapter):
             "tp_price": tp_price,
             "sl_price": sl_price,
             "leverage": leverage,
+            "timeout": timeout.isoformat() if timeout else None,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await r.set(self._pending_key(order_id), json.dumps(order))
@@ -279,6 +284,8 @@ class PaperTradeAdapter(TradeAdapter):
                 (side == "short" and current_price >= limit_price)
             )
             if should_fill:
+                raw_timeout = order.get("timeout")
+                timeout_dt = datetime.fromisoformat(raw_timeout) if raw_timeout else None
                 result = await self._fill_immediately(
                     symbol=symbol,
                     side=side,
@@ -288,6 +295,7 @@ class PaperTradeAdapter(TradeAdapter):
                     sl_price=order.get("sl_price"),
                     order_id=oid,
                     leverage=float(order.get("leverage", 1.0)),
+                    timeout=timeout_dt,
                 )
                 await r.delete(self._pending_key(oid))
                 await r.srem(self._pending_set(), oid)
@@ -295,3 +303,22 @@ class PaperTradeAdapter(TradeAdapter):
                 logger.info(f"[PAPER] Limit order filled: {oid} {side} {symbol} @ {limit_price}")
 
         return filled
+
+    async def get_timed_out_positions(self, current_time: datetime) -> list[tuple[str, str]]:
+        """
+        Scan all open positions for this config and return (symbol, side) pairs
+        whose timeout has passed. Call on each tick to trigger expiry-based closes.
+        """
+        r = await self._get_redis()
+        pattern = _POSITION_KEY.format(config_id=self._config_id, symbol="*")
+        keys = await r.keys(pattern)
+        result: list[tuple[str, str]] = []
+        for key in keys:
+            raw = await r.get(key)
+            if not raw:
+                continue
+            pos = json.loads(raw)
+            t = pos.get("timeout")
+            if t and datetime.fromisoformat(t) <= current_time:
+                result.append((pos["symbol"], pos["side"]))
+        return result

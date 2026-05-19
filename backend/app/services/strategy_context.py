@@ -77,6 +77,7 @@ class StrategyContext:
                     "quote_asset": l.quote_asset,
                     "exchange_account_num": l.exchange_account_num,
                     "transaction_fee": l.transaction_fee,
+                    "leverage": l.leverage,
                 }
                 for l in self.legs
             ],

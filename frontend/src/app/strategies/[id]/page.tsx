@@ -2,7 +2,7 @@
 
 import { use } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { strategies, positions, tradeHistory, trades } from "@/lib/api";
 import { StrategyAssetChart } from "@/components/charts/StrategyAssetChart";
@@ -81,8 +81,15 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
     useShallow((s) => ({ livePrices: s.livePrices, latestTicks: s.latestTicks }))
   );
 
+  const queryClient = useQueryClient();
+
   const openPositions = (positionList ?? []).filter((p) => p.is_open);
   const closedPositions = (positionList ?? []).filter((p) => !p.is_open);
+
+  async function handleClosePosition(posId: number, price: number) {
+    await positions.close(posId, price);
+    queryClient.invalidateQueries({ queryKey: ["positions", id] });
+  }
 
   if (!strategy) return <p className="text-muted-foreground">Loading…</p>;
 
@@ -145,6 +152,7 @@ export default function StrategyDetailPage({ params }: { params: Promise<{ id: s
       <OpenPositionsTable
         positions={openPositions}
         getLivePrice={(sym) => getPriceForSymbol(sym, [livePrices, latestTicks])}
+        onClose={handleClosePosition}
       />
       <PositionHistoryTable positions={closedPositions} />
     </div>

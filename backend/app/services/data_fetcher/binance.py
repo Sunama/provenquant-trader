@@ -28,7 +28,27 @@ logger = logging.getLogger(__name__)
 
 _TF_MAP = {
     "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m",
-    "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d",
+    "30m": "30m", "1h": "1h", "2h": "2h", "4h": "4h",
+    "6h": "6h", "8h": "8h", "12h": "12h", "1d": "1d",
+    "3d": "3d", "1w": "1w", "1M": "1M",
+}
+
+_TF_MS_MAP: dict[str, int] = {
+    "1m":  60_000,
+    "3m":  3  * 60_000,
+    "5m":  5  * 60_000,
+    "15m": 15 * 60_000,
+    "30m": 30 * 60_000,
+    "1h":  3_600_000,
+    "2h":  2  * 3_600_000,
+    "4h":  4  * 3_600_000,
+    "6h":  6  * 3_600_000,
+    "8h":  8  * 3_600_000,
+    "12h": 12 * 3_600_000,
+    "1d":  86_400_000,
+    "3d":  3  * 86_400_000,
+    "1w":  7  * 86_400_000,
+    "1M":  30 * 86_400_000,
 }
 
 _OI_POLL_INTERVAL = 30
@@ -166,45 +186,124 @@ class BinanceBaseDataFetcher(DataFetcher):
 
     # ── Historical backfill ───────────────────────────────────────
 
+    async def _latest_tick_ms(self, symbol: str, timeframe: str, market_type: str) -> int | None:
+        """Return the most recent stored tick time as Unix ms, or None if no rows exist."""
+        from sqlalchemy import select as sa_select, desc as sa_desc
+        async with SessionLocal() as db:
+            row = (
+                await db.execute(
+                    sa_select(Tick.time)
+                    .where(
+                        Tick.symbol == symbol.lower(),
+                        Tick.timeframe == timeframe,
+                        Tick.market_type == market_type,
+                    )
+                    .order_by(sa_desc(Tick.time))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return int(row.timestamp() * 1000) if row is not None else None
+
+    async def _fetch_and_insert(
+        self,
+        client: httpx.AsyncClient,
+        sub: Subscription,
+        params: dict,
+        symbol_upper: str,
+        interval: str,
+    ) -> int:
+        """Fetch one page of klines from Binance REST and upsert into Postgres. Returns row count."""
+        resp = await client.get(f"{self._rest_base}{self._klines_path}", params=params)
+        if resp.status_code != 200:
+            logger.warning(f"[backfill] {symbol_upper} {interval} HTTP {resp.status_code}")
+            return 0
+        klines = resp.json()
+        if not klines:
+            return 0
+        rows = [
+            {
+                "symbol":      sub.symbol.lower(),
+                "timeframe":   sub.timeframe,
+                "market_type": sub.market_type,
+                "time":        datetime.fromtimestamp(int(k[0]) / 1000, tz=timezone.utc),
+                "open":   float(k[1]),
+                "high":   float(k[2]),
+                "low":    float(k[3]),
+                "close":  float(k[4]),
+                "volume": float(k[5]),
+            }
+            for k in klines
+        ]
+        async with SessionLocal() as db:
+            await db.execute(
+                insert(Tick).values(rows).on_conflict_do_nothing(constraint="uq_tick")
+            )
+            await db.commit()
+        return len(rows)
+
     async def _backfill_task(self) -> None:
+        """
+        On startup, fill any kline gap that accumulated while the process was down.
+
+        For each subscription:
+          - If no history in DB: seed the last 200 bars (first-run bootstrap).
+          - If DB has data: fetch from (latest_stored + 1 interval) to now, paginated
+            in batches of 1000 so arbitrarily long downtime periods are covered.
+        """
+        _BATCH = 1000
         seen: set[str] = set()
-        async with httpx.AsyncClient(timeout=15) as client:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        async with httpx.AsyncClient(timeout=30) as client:
             for sub in list(self._subscriptions.values()):
                 key = f"{sub.symbol}:{sub.timeframe}:{sub.market_type}"
                 if key in seen:
                     continue
                 seen.add(key)
-                interval = _TF_MAP.get(sub.timeframe, "1m")
+
+                interval     = _TF_MAP.get(sub.timeframe, "1m")
+                interval_ms  = _TF_MS_MAP.get(sub.timeframe, 60_000)
                 symbol_upper = sub.symbol.upper()
+
                 try:
-                    resp = await client.get(
-                        f"{self._rest_base}{self._klines_path}",
-                        params={"symbol": symbol_upper, "interval": interval, "limit": 200},
-                    )
-                    if resp.status_code != 200:
-                        logger.warning(f"[backfill] {symbol_upper} {interval} HTTP {resp.status_code}")
+                    latest_ms = await self._latest_tick_ms(sub.symbol, sub.timeframe, sub.market_type)
+
+                    if latest_ms is None:
+                        # No history at all — bootstrap with last 200 bars
+                        params = {"symbol": symbol_upper, "interval": interval, "limit": 200}
+                        count = await self._fetch_and_insert(client, sub, params, symbol_upper, interval)
+                        if count:
+                            logger.info(f"[backfill] {symbol_upper} {interval} {sub.market_type}: bootstrapped {count} bars")
                         continue
-                    rows = [
-                        {
-                            "symbol": sub.symbol.lower(),
-                            "timeframe": sub.timeframe,
-                            "market_type": sub.market_type,
-                            "time": datetime.fromtimestamp(int(k[0]) / 1000, tz=timezone.utc),
-                            "open": float(k[1]),
-                            "high": float(k[2]),
-                            "low": float(k[3]),
-                            "close": float(k[4]),
-                            "volume": float(k[5]),
+
+                    start_ms = latest_ms + interval_ms
+                    if start_ms >= now_ms:
+                        logger.debug(f"[backfill] {symbol_upper} {interval}: already up-to-date")
+                        continue
+
+                    # Gap exists — paginate from start_ms to now_ms
+                    fetched = 0
+                    cursor = start_ms
+                    while cursor < now_ms:
+                        end_ms = min(cursor + _BATCH * interval_ms - 1, now_ms)
+                        params = {
+                            "symbol":    symbol_upper,
+                            "interval":  interval,
+                            "startTime": cursor,
+                            "endTime":   end_ms,
+                            "limit":     _BATCH,
                         }
-                        for k in resp.json()
-                    ]
-                    if rows:
-                        async with SessionLocal() as db:
-                            await db.execute(
-                                insert(Tick).values(rows).on_conflict_do_nothing(constraint="uq_tick")
-                            )
-                            await db.commit()
-                        logger.info(f"[backfill] {symbol_upper} {interval} {sub.market_type}: seeded {len(rows)} bars")
+                        count = await self._fetch_and_insert(client, sub, params, symbol_upper, interval)
+                        if count == 0:
+                            break
+                        fetched += count
+                        cursor += _BATCH * interval_ms
+
+                    if fetched:
+                        logger.info(
+                            f"[backfill] {symbol_upper} {interval} {sub.market_type}: gap-filled {fetched} bars"
+                        )
+
                 except asyncio.CancelledError:
                     return
                 except Exception:

@@ -80,6 +80,7 @@ export interface Position {
   is_open: boolean;
   leverage?: number;
   market_type?: string;
+  timeout?: string;
   created_at?: string;
 }
 

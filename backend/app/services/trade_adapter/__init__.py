@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 from app.services.strategy_executer import PriceMethod
@@ -73,6 +74,7 @@ class TradeAdapter(ABC):
         sl_price: Optional[float] = None,
         price_method: PriceMethod = PriceMethod.MARKET,
         leverage: float = 1.0,
+        timeout: Optional[datetime] = None,
     ) -> OrderResult:
         """Open a new position. Returns fill details (may be pending for limit orders)."""
         ...

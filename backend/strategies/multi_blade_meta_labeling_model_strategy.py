@@ -50,10 +50,10 @@ logger = logging.getLogger(__name__)
 
 # Redis state keys (all scoped via config_id by RedisDataFetcher)
 _K_STATUS    = "mb_status"      # "neutral" | "long" | "short"
-_K_T1_MS     = "mb_t1_ms"       # Unix ms when the position must be closed
 _K_SIGNAL_MS = "mb_signal_ms"   # Unix ms of the prediction we entered on
 _K_TP_PCT    = "mb_tp_pct"      # tp_pct stored when opening (for TP/SL check)
 _K_SL_PCT    = "mb_sl_pct"      # sl_pct stored when opening (for TP/SL check)
+# NOTE: t1 barrier timeout is now stored as Position.timeout in the DB (via LegOrder.timeout)
 
 # A prediction is considered "fresh" if the current time is within this window
 # of its bar time (signals come from 1m bars, ~1–5 bar lag is normal)
@@ -186,9 +186,8 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
                         reason=f"{hit_label} hit at {tick.close:.2f}",
                     )
 
-            # t1 barrier expiry
-            t1_ms = int(await context.redis.get_state(_K_T1_MS, "0"))
-            if t1_ms > 0 and now_ms >= t1_ms:
+            # t1 barrier expiry — check Position.timeout stored in DB
+            if pos.timeout and now_ms >= int(pos.timeout.timestamp() * 1000):
                 return await self._close_position(context, tick, leg_num, status)
             return None
 
@@ -231,17 +230,16 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
         t1_ms = _to_ms(t1_raw)
         signal_ms = _to_ms(prediction["time"])
         action = SignalAction.OPEN_LONG if side == "long" else SignalAction.OPEN_SHORT
+        t1_dt = datetime.fromtimestamp(t1_ms / 1000, tz=timezone.utc)
 
         await context.redis.set_state(_K_STATUS, side)
-        await context.redis.set_state(_K_T1_MS, str(t1_ms))
         await context.redis.set_state(_K_SIGNAL_MS, str(signal_ms))
         await context.redis.set_state(_K_TP_PCT, str(tp_pct))
         await context.redis.set_state(_K_SL_PCT, str(sl_pct))
 
-        t1_iso = datetime.fromtimestamp(t1_ms / 1000, tz=timezone.utc).isoformat()
         logger.info(
             f"[MBMLM] OPEN {side.upper()} | symbol={tick.symbol} "
-            f"tp={tp_pct:.4f} sl={sl_pct:.4f} t1={t1_iso}"
+            f"tp={tp_pct:.4f} sl={sl_pct:.4f} t1={t1_dt.isoformat()}"
         )
 
         return ExecutionPlan(orders=[
@@ -256,6 +254,7 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
                 sl_pct=sl_pct,
                 reason=open_reason,
                 leverage=self.legs[leg_num].leverage,
+                timeout=t1_dt,
             )
         ])
 
@@ -340,7 +339,6 @@ class MultiBladeMetaLabelingModelStrategy(StrategyExecuter):
 
     async def _reset_state(self, context: StrategyContext) -> None:
         await context.redis.set_state(_K_STATUS, "neutral")
-        await context.redis.set_state(_K_T1_MS, "0")
         await context.redis.set_state(_K_SIGNAL_MS, "0")
         await context.redis.set_state(_K_TP_PCT, "0")
         await context.redis.set_state(_K_SL_PCT, "0")
