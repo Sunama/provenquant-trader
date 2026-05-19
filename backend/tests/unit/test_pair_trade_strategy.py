@@ -7,8 +7,19 @@ import numpy as np
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.data_fetcher import TickData
-from app.services.strategy_executer import SignalAction
+from app.services.strategy_executer import SignalAction, StrategyLeg
 from strategies.example_pair_trade import PairTradeStrategy
+
+_DEFAULT_LEGS = [
+    StrategyLeg(leg_num=0, role="primary", symbol="btcusdt",
+                exchange="binance", market_type="futures", timeframe="1h", tick_process=True),
+    StrategyLeg(leg_num=1, role="hedge", symbol="ethusdt",
+                exchange="binance", market_type="futures", timeframe="1h", tick_process=False),
+]
+
+
+def _make_pair_strategy(**params) -> PairTradeStrategy:
+    return PairTradeStrategy(params=params, legs=_DEFAULT_LEGS)
 
 
 def _tick(close: float, symbol: str = "btcusdt") -> TickData:
@@ -121,7 +132,7 @@ async def test_execute_long_btc_short_eth_when_ratio_is_very_low():
     tick.close = 40000 → current_ratio = 20 → z ≈ -20.
     """
     lookback = 5
-    s = PairTradeStrategy(params={"lookback": lookback, "z_threshold": 2.0, "amount": 0.3})
+    s = _make_pair_strategy(lookback=lookback, z_threshold=2.0, amount=0.3)
     btc = [59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000]
     eth = [2_000.0] * 10
     ctx = _make_context(btc_closes=btc, eth_closes=eth)
@@ -138,7 +149,7 @@ async def test_execute_long_btc_short_eth_when_ratio_is_very_low():
 async def test_execute_short_btc_long_eth_when_ratio_is_very_high():
     """BTC expensive relative to ETH → z >> threshold → OPEN_SHORT leg 0 + OPEN_LONG leg 1."""
     lookback = 5
-    s = PairTradeStrategy(params={"lookback": lookback, "z_threshold": 2.0, "amount": 0.3})
+    s = _make_pair_strategy(lookback=lookback, z_threshold=2.0, amount=0.3)
     btc = [59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000]
     eth = [2_000.0] * 10
     ctx = _make_context(btc_closes=btc, eth_closes=eth)
@@ -168,7 +179,7 @@ async def test_execute_no_signal_in_neutral_zone():
 @pytest.mark.asyncio
 async def test_execute_signal_uses_configured_amount():
     lookback = 5
-    s = PairTradeStrategy(params={"lookback": lookback, "z_threshold": 2.0, "amount": 0.25})
+    s = _make_pair_strategy(lookback=lookback, z_threshold=2.0, amount=0.25)
     btc = [59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000]
     eth = [2_000.0] * 10
     ctx = _make_context(btc_closes=btc, eth_closes=eth)
@@ -184,7 +195,7 @@ async def test_execute_signal_uses_configured_amount():
 async def test_execute_always_returns_two_leg_orders():
     """A valid signal always produces exactly 2 orders (one per leg)."""
     lookback = 5
-    s = PairTradeStrategy(params={"lookback": lookback, "z_threshold": 2.0, "amount": 0.3})
+    s = _make_pair_strategy(lookback=lookback, z_threshold=2.0, amount=0.3)
     btc = [59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000, 59_000, 61_000]
     eth = [2_000.0] * 10
     ctx = _make_context(btc_closes=btc, eth_closes=eth)

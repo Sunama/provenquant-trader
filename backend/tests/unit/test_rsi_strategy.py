@@ -9,6 +9,17 @@ from app.services.data_fetcher import TickData
 from app.services.strategy_executer import SignalAction, LegOrder, StrategyLeg
 from strategies.example_rsi import RSIStrategy, _rsi
 
+# Default leg mirrors what the DB provides in production.
+_DEFAULT_LEG = StrategyLeg(
+    leg_num=0, role="primary", symbol="btcusdt",
+    exchange="binance", market_type="futures", timeframe="30m", tick_process=True,
+)
+
+
+def _make_rsi_strategy(**params) -> RSIStrategy:
+    """Create an RSIStrategy with a default leg so leverage lookups don't fail."""
+    return RSIStrategy(params=params, legs=[_DEFAULT_LEG])
+
 
 def _tick(close: float, symbol: str = "btcusdt") -> TickData:
     return TickData(
@@ -31,6 +42,8 @@ def _make_context(closes: list, status: str = "neutral", tick: TickData = None) 
     ctx.redis.get_recent_closes = AsyncMock(return_value=closes)
     ctx.redis.get_status = AsyncMock(return_value=status)
     ctx.redis.set_status = AsyncMock()
+    ctx.db = AsyncMock()
+    ctx.db.get_open_positions = AsyncMock(return_value=[])
     return ctx
 
 
@@ -113,7 +126,7 @@ def test_rsi_strategy_uses_configured_legs():
 @pytest.mark.asyncio
 async def test_execute_returns_none_with_insufficient_data():
     """Fewer than period+1 closes → _rsi returns 50.0 → no signal."""
-    s = RSIStrategy(params={"period": 14, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=14, oversold=30.0, overbought=70.0, amount=0.5)
     ctx = _make_context(closes=[50_000.0], status="neutral")
     result = await s.execute(ctx)
     assert result is None
@@ -125,7 +138,7 @@ async def test_execute_open_long_when_rsi_below_oversold():
     closes = [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
     tick = _tick(94.0)
     ctx = _make_context(closes=closes, status="neutral", tick=tick)
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     plan = await s.execute(ctx)
     assert plan is not None
     actions = {o.action for o in plan.orders}
@@ -138,7 +151,7 @@ async def test_execute_open_short_when_rsi_above_overbought():
     closes = [90.0, 91.0, 92.0, 93.0, 94.0, 95.0, 96.0]
     tick = _tick(96.0)
     ctx = _make_context(closes=closes, status="neutral", tick=tick)
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     plan = await s.execute(ctx)
     assert plan is not None
     actions = {o.action for o in plan.orders}
@@ -150,7 +163,7 @@ async def test_execute_no_signal_in_neutral_zone():
     """Alternating prices → RSI ≈ 50 → None returned."""
     closes = [100.0, 101.0, 100.0, 101.0, 100.0, 101.0, 100.0]
     ctx = _make_context(closes=closes, status="neutral", tick=_tick(100.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     plan = await s.execute(ctx)
     assert plan is None
 
@@ -159,7 +172,7 @@ async def test_execute_no_signal_in_neutral_zone():
 async def test_execute_long_order_has_correct_amount():
     closes = [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
     ctx = _make_context(closes=closes, status="neutral", tick=_tick(94.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.3})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.3)
     plan = await s.execute(ctx)
     assert plan is not None
     open_order = next(o for o in plan.orders if o.action == SignalAction.OPEN_LONG)
@@ -170,8 +183,8 @@ async def test_execute_long_order_has_correct_amount():
 async def test_execute_long_order_has_correct_tp_sl():
     closes = [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
     ctx = _make_context(closes=closes, status="neutral", tick=_tick(94.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0,
-                             "amount": 0.5, "tp_pct": 0.05, "sl_pct": 0.02})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0,
+                            amount=0.5, tp_pct=0.05, sl_pct=0.02)
     plan = await s.execute(ctx)
     assert plan is not None
     open_order = next(o for o in plan.orders if o.action == SignalAction.OPEN_LONG)
@@ -184,7 +197,7 @@ async def test_execute_long_order_price_equals_tick_close():
     closes = [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
     tick = _tick(94.0)
     ctx = _make_context(closes=closes, status="neutral", tick=tick)
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     plan = await s.execute(ctx)
     assert plan is not None
     open_order = next(o for o in plan.orders if o.action == SignalAction.OPEN_LONG)
@@ -196,7 +209,7 @@ async def test_execute_no_repeat_long_if_already_long():
     """Status is already 'long' → no OPEN_LONG signal."""
     closes = [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
     ctx = _make_context(closes=closes, status="long", tick=_tick(94.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     plan = await s.execute(ctx)
     if plan is not None:
         actions = {o.action for o in plan.orders}
@@ -207,7 +220,7 @@ async def test_execute_no_repeat_long_if_already_long():
 async def test_execute_sets_status_to_long_after_open_long():
     closes = [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
     ctx = _make_context(closes=closes, status="neutral", tick=_tick(94.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     await s.execute(ctx)
     ctx.redis.set_status.assert_called_with("long")
 
@@ -216,7 +229,7 @@ async def test_execute_sets_status_to_long_after_open_long():
 async def test_execute_sets_status_to_short_after_open_short():
     closes = [90.0, 91.0, 92.0, 93.0, 94.0, 95.0, 96.0]
     ctx = _make_context(closes=closes, status="neutral", tick=_tick(96.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     await s.execute(ctx)
     ctx.redis.set_status.assert_called_with("short")
 
@@ -226,7 +239,7 @@ async def test_execute_close_short_then_open_long_when_currently_short():
     """When status is 'short' and RSI is below oversold → CLOSE_SHORT then OPEN_LONG."""
     closes = [100.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
     ctx = _make_context(closes=closes, status="short", tick=_tick(94.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     plan = await s.execute(ctx)
     assert plan is not None
     actions = [o.action for o in plan.orders]
@@ -239,7 +252,7 @@ async def test_execute_close_long_then_open_short_when_currently_long():
     """When status is 'long' and RSI is above overbought → CLOSE_LONG then OPEN_SHORT."""
     closes = [90.0, 91.0, 92.0, 93.0, 94.0, 95.0, 96.0]
     ctx = _make_context(closes=closes, status="long", tick=_tick(96.0))
-    s = RSIStrategy(params={"period": 5, "oversold": 30.0, "overbought": 70.0, "amount": 0.5})
+    s = _make_rsi_strategy(period=5, oversold=30.0, overbought=70.0, amount=0.5)
     plan = await s.execute(ctx)
     assert plan is not None
     actions = [o.action for o in plan.orders]

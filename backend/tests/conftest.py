@@ -6,6 +6,7 @@ import os
 
 # Must be set before the first `from app.core.settings import settings` is executed.
 _defaults = {
+    "API_KEY": "test-api-key",
     "SERVER_SECRET": "test-secret-key-for-unit-testing-only",
     "POSTGRES_PASSWORD": "testpass",
     "TRADER_POSTGRES_USER": "trader",

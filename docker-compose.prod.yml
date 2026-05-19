@@ -31,7 +31,9 @@ services:
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
-    command: ["celery", "-A", "app.core.celery_app", "worker", "-Q", "default,low,medium,high", "--loglevel=WARNING"]
+    command: ["celery", "-A", "app.core.celery_app", "worker", "-Q", "default,low,medium,high,strategy", "--loglevel=WARNING"]
+    environment:
+      PYTHONPATH: /backend
     env_file: .env
     restart: unless-stopped
     depends_on:

@@ -148,12 +148,14 @@ async def test_spot_handle_kline_closed_bar_emits_tick(mock_redis):
 
 
 @pytest.mark.asyncio
-async def test_spot_handle_kline_open_bar_does_not_emit(mock_redis):
+async def test_spot_handle_kline_open_bar_emits_with_is_closed_false(mock_redis):
+    """Open bars are emitted for real-time chart updates; is_closed distinguishes them."""
     f = _fetcher(mock_redis)
     received = []
     f.add_callback(AsyncMock(side_effect=lambda t: received.append(t)))
     await f._handle_kline(_kline_msg("ETHUSDT", "1m", 3_000.0, is_closed=False))
-    assert len(received) == 0
+    assert len(received) == 1
+    assert received[0].is_closed is False
 
 
 # ── AggTrade handler ──────────────────────────────────────────────────────
